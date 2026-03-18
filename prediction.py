@@ -57,7 +57,7 @@ def draw_landmarks_on_image(image, detection_result):
             solutions.drawing_styles.get_default_hand_connections_style())
     return image
 
-def get_camera_matrix(frame_width, frame_height, scale=1.0): 
+def get_camera_matrix(frame_width, frame_height, scale=0.8):
     """
     The camera matrix is a matrix of size 3x3 that captures the intrinsic properties of the camera including focal length and center of projection. 
     One can project a 3D point in the camera space to the image plane by multiplying it with the intrinsic matrix. 
