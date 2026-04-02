@@ -67,11 +67,47 @@ ACTIVE_FLASH_SEC = 0.20
 HOMOGRAPHY_HOLD_SEC = 0.40
 SMOOTH_ALPHA = 0.35
 MARKER_HOLD_SEC = 0.45
-HAND_SMOOTH_ALPHA = 0.35
+# Marker lock/retrack policy:
+# - INIT: wait until markers are stable for a short time, then lock.
+# - LOCKED: keep H/keyboard fixed unless marker movement is clearly large.
+# - RETRACK: show notice and spend a few seconds reacquiring a new stable lock.
+MARKER_STABLE_SEC = 0.85
+MARKER_STABLE_MOVE_PX = 4.0
+MARKER_BIG_MOVE_PX = 55.0
+MARKER_BIG_MOVE_CONFIRM_FRAMES = 3
+RETRACK_MIN_SEC = 2.2
+STATUS_NOTICE_SEC = 2.6
+# Adaptive fingertip smoothing:
+# - slow movement: stronger smoothing (less jitter)
+# - fast movement: lighter smoothing (less lag)
+HAND_MIN_ALPHA = 0.22
+HAND_MAX_ALPHA = 0.78
+HAND_ADAPT_SPEED_PX = 22.0
+HAND_MAX_JUMP_PX = 46.0
+HAND_DY_SMOOTH_ALPHA = 0.45
+HAND_DY_DEADZONE_PX = 0.70
+HAND_LOOKAHEAD_GAIN_Y = 0.38
+HAND_LOOKAHEAD_MAX_Y = 12.0
+# Press logic direction:
+# We keep ArUco/geometry on raw frame, but use vertically flipped dy only for
+# press/release judgment so it matches the final displayed orientation.
+PRESS_USE_DISPLAY_FLIPPED_DY = True
+
+# Lightweight 3D press gate using MediaPipe landmark z.
+# z offset is measured against a short-term hover baseline per finger.
+ENABLE_3D_PRESS_GATE = True
+ENABLE_3D_RELEASE_GATE = True
+HAND_Z_SMOOTH_ALPHA = 0.40
+HAND_Z_BASELINE_ALPHA = 0.12
+# Calibrated from: Paper Piano V1 2026-04-02 16-46-48.mp4
+PRESS_Z_OFFSET_THRESHOLD = 0.0057
+RELEASE_Z_OFFSET_THRESHOLD = 0.0047
 KEY_EDGE_MARGIN_RATIO = 0.10
-KEY_STABLE_FRAMES = 3
-PRESS_DY_THRESHOLD = 6.0
-RELEASE_DY_THRESHOLD = -2.0
+KEY_STABLE_FRAMES = 2
+# Use |dy| for press, then use opposite-direction dy for release.
+PRESS_DY_THRESHOLD = 0.90
+RELEASE_DY_MAG_THRESHOLD = 0.80
+PRESS_STRONG_DY_MULTIPLIER = 3.00
 MAX_CONSECUTIVE_READ_FAILS = 10
 
 # ArUco marker settings (printed A4 template)
@@ -218,9 +254,13 @@ class PaperPiano:
         self.keyboard_rect = np.array([KEYBOARD_X0, KEYBOARD_Y0, KEYBOARD_X1, KEYBOARD_Y1], dtype=np.float32)
         self.last_keyboard_rect_time: float = -999.0
         self.keyboard_rect_locked: bool = False
+        self.keyboard_rect_initialized: bool = False
 
         # Hand-tracking stabilization state
         self.smoothed_fingertips: Dict[Tuple[int, int], np.ndarray] = {}
+        self.smoothed_dy_by_finger: Dict[Tuple[int, int], float] = {}
+        self.smoothed_tip_z_by_finger: Dict[Tuple[int, int], float] = {}
+        self.hover_baseline_z_by_finger: Dict[Tuple[int, int], float] = {}
         self.candidate_key_by_finger: Dict[Tuple[int, int], Optional[int]] = {}
         self.stable_count_by_finger: Dict[Tuple[int, int], int] = {}
 
@@ -228,6 +268,7 @@ class PaperPiano:
         self.prev_raw_fingertips: Dict[Tuple[int, int], np.ndarray] = {}
         self.finger_state: Dict[Tuple[int, int], str] = {}
         self.finger_down_key: Dict[Tuple[int, int], Optional[int]] = {}
+        self.finger_press_dir: Dict[Tuple[int, int], float] = {}
         self.hand_label_overlays: List[Tuple[int, float, float, Tuple[int, int, int]]] = []
 
         self.smoothed_markers: Dict[str, np.ndarray] = {}
@@ -235,6 +276,14 @@ class PaperPiano:
         self.last_good_H: Optional[np.ndarray] = None
         self.last_good_H_inv: Optional[np.ndarray] = None
         self.last_good_time: float = -999.0
+        self.tracking_mode: str = "INIT"  # INIT -> LOCKED -> RETRACK
+        self.marker_stable_since: float = -1.0
+        self.prev_markers_for_stability: Optional[Dict[str, np.ndarray]] = None
+        self.locked_markers: Optional[Dict[str, np.ndarray]] = None
+        self.retrack_start_time: float = -1.0
+        self.big_move_frame_count: int = 0
+        self.status_notice_text: str = ""
+        self.status_notice_until: float = -1.0
         self.last_fps_time = time.time()
         self.fps = 0.0
         if not hasattr(cv2, "aruco"):
@@ -281,6 +330,33 @@ class PaperPiano:
             self.synth.close()
         cv2.destroyAllWindows()
 
+    def _all_tracked_finger_ids(self) -> set:
+        ids = set(self.prev_key_by_finger.keys())
+        ids.update(self.smoothed_fingertips.keys())
+        ids.update(self.smoothed_dy_by_finger.keys())
+        ids.update(self.smoothed_tip_z_by_finger.keys())
+        ids.update(self.hover_baseline_z_by_finger.keys())
+        ids.update(self.prev_raw_fingertips.keys())
+        ids.update(self.candidate_key_by_finger.keys())
+        ids.update(self.stable_count_by_finger.keys())
+        ids.update(self.finger_state.keys())
+        ids.update(self.finger_down_key.keys())
+        ids.update(self.finger_press_dir.keys())
+        return ids
+
+    def _clear_finger_state(self, finger_id: Tuple[int, int]) -> None:
+        self.prev_key_by_finger.pop(finger_id, None)
+        self.smoothed_fingertips.pop(finger_id, None)
+        self.smoothed_dy_by_finger.pop(finger_id, None)
+        self.smoothed_tip_z_by_finger.pop(finger_id, None)
+        self.hover_baseline_z_by_finger.pop(finger_id, None)
+        self.prev_raw_fingertips.pop(finger_id, None)
+        self.candidate_key_by_finger.pop(finger_id, None)
+        self.stable_count_by_finger.pop(finger_id, None)
+        self.finger_state.pop(finger_id, None)
+        self.finger_down_key.pop(finger_id, None)
+        self.finger_press_dir.pop(finger_id, None)
+
     def _collect_id_to_corners(self, img: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(img)
         id_to_corners: Dict[int, np.ndarray] = {}
@@ -313,6 +389,74 @@ class PaperPiano:
             idx = ARUCO_CORNER_INDEX[corner_name]
             detected[corner_name] = marker_corners[idx].astype(np.float32)
         return detected
+
+    @staticmethod
+    def _copy_markers(markers: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        return {name: pt.astype(np.float32).copy() for name, pt in markers.items()}
+
+    @staticmethod
+    def _marker_motion(markers_a: Dict[str, np.ndarray], markers_b: Dict[str, np.ndarray]) -> float:
+        motions: List[float] = []
+        for name in ["tl", "tr", "br", "bl"]:
+            pa = markers_a.get(name)
+            pb = markers_b.get(name)
+            if pa is None or pb is None:
+                continue
+            motions.append(float(np.linalg.norm(pa - pb)))
+        if not motions:
+            return float("inf")
+        return float(max(motions))
+
+    def _reset_stability_window(self) -> None:
+        self.marker_stable_since = -1.0
+        self.prev_markers_for_stability = None
+
+    def _update_marker_stability(self, markers: Optional[Dict[str, np.ndarray]], now: float) -> bool:
+        if markers is None:
+            self._reset_stability_window()
+            return False
+
+        if self.prev_markers_for_stability is None:
+            self.prev_markers_for_stability = self._copy_markers(markers)
+            self.marker_stable_since = now
+            return False
+
+        move_px = self._marker_motion(markers, self.prev_markers_for_stability)
+        self.prev_markers_for_stability = self._copy_markers(markers)
+        if move_px > MARKER_STABLE_MOVE_PX:
+            self.marker_stable_since = now
+
+        if self.marker_stable_since < 0.0:
+            self.marker_stable_since = now
+            return False
+        return (now - self.marker_stable_since) >= MARKER_STABLE_SEC
+
+    def _set_status_notice(self, text: str, now: float) -> None:
+        self.status_notice_text = text
+        self.status_notice_until = now + STATUS_NOTICE_SEC
+
+    def _enter_locked_state(
+        self,
+        markers: Dict[str, np.ndarray],
+        H: np.ndarray,
+        H_inv: np.ndarray,
+        now: float,
+    ) -> None:
+        self.tracking_mode = "LOCKED"
+        self.locked_markers = self._copy_markers(markers)
+        self.last_good_H = H
+        self.last_good_H_inv = H_inv
+        self.last_good_time = now
+        self.big_move_frame_count = 0
+        self._reset_stability_window()
+        self._set_status_notice("Tracking stabilized: keyboard locked.", now)
+
+    def _start_retrack(self, now: float) -> None:
+        self.tracking_mode = "RETRACK"
+        self.retrack_start_time = now
+        self.big_move_frame_count = 0
+        self._reset_stability_window()
+        self._set_status_notice("Large marker movement detected. Re-tracking...", now)
 
     def detect_markers(self, frame: np.ndarray, now: float) -> Optional[Dict[str, np.ndarray]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -352,30 +496,57 @@ class PaperPiano:
 
     def update_homography(self, frame: np.ndarray, now: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[Dict[str, np.ndarray]]]:
         markers = self.detect_markers(frame, now)
-        if markers is not None:
-            src = np.array([
-                markers["tl"],
-                markers["tr"],
-                markers["br"],
-                markers["bl"],
-            ], dtype=np.float32)
-            dst = np.array([
-                [0, 0],
-                [PAPER_W, 0],
-                [PAPER_W, PAPER_H],
-                [0, PAPER_H],
-            ], dtype=np.float32)
-            H = cv2.getPerspectiveTransform(src, dst)
-            H_inv = cv2.getPerspectiveTransform(dst, src)
-            self.last_good_H = H
-            self.last_good_H_inv = H_inv
-            self.last_good_time = now
-            return H, H_inv, markers
+        if self.tracking_mode == "LOCKED":
+            if markers is not None and self.locked_markers is not None:
+                big_move_px = self._marker_motion(markers, self.locked_markers)
+                if big_move_px >= MARKER_BIG_MOVE_PX:
+                    self.big_move_frame_count += 1
+                else:
+                    self.big_move_frame_count = 0
+                if self.big_move_frame_count >= MARKER_BIG_MOVE_CONFIRM_FRAMES:
+                    self._start_retrack(now)
 
-        if self.last_good_H is not None and (now - self.last_good_time) <= HOMOGRAPHY_HOLD_SEC:
-            return self.last_good_H, self.last_good_H_inv, None
+            if self.tracking_mode == "LOCKED":
+                return self.last_good_H, self.last_good_H_inv, markers
 
-        return None, None, None
+        if markers is None:
+            self._update_marker_stability(None, now)
+            if self.last_good_H is not None and (now - self.last_good_time) <= HOMOGRAPHY_HOLD_SEC:
+                return self.last_good_H, self.last_good_H_inv, None
+            return None, None, None
+
+        src = np.array([
+            markers["tl"],
+            markers["tr"],
+            markers["br"],
+            markers["bl"],
+        ], dtype=np.float32)
+        dst = np.array([
+            [0, 0],
+            [PAPER_W, 0],
+            [PAPER_W, PAPER_H],
+            [0, PAPER_H],
+        ], dtype=np.float32)
+        H = cv2.getPerspectiveTransform(src, dst)
+        H_inv = cv2.getPerspectiveTransform(dst, src)
+        self.last_good_H = H
+        self.last_good_H_inv = H_inv
+        self.last_good_time = now
+
+        stable_ready = self._update_marker_stability(markers, now)
+        retrack_wait_done = True
+        if self.tracking_mode == "RETRACK":
+            retrack_wait_done = (now - self.retrack_start_time) >= RETRACK_MIN_SEC
+
+        keyboard_ready_for_lock = (
+            self.keyboard_rect_initialized
+            and (now - self.last_keyboard_rect_time) <= KEYBOARD_RECT_HOLD_SEC
+        )
+        if stable_ready and retrack_wait_done and keyboard_ready_for_lock:
+            self._enter_locked_state(markers, H, H_inv, now)
+            return self.last_good_H, self.last_good_H_inv, markers
+
+        return H, H_inv, markers
 
     def paper_to_image(self, H_inv: np.ndarray, points: np.ndarray) -> np.ndarray:
         pts = points.reshape(-1, 1, 2).astype(np.float32)
@@ -500,24 +671,34 @@ class PaperPiano:
         return best_rect
 
     def update_keyboard_rect(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
+        # Keep keyboard rectangle frozen after tracking is locked.
+        if self.tracking_mode == "LOCKED":
+            self.keyboard_rect_locked = self.keyboard_rect_initialized
+            return
+
         detected: Optional[np.ndarray] = None
         if H is not None:
             detected = self._detect_keyboard_rect(frame, H)
 
         if detected is not None:
-            self.keyboard_rect = (
-                KEYBOARD_RECT_SMOOTH_ALPHA * detected
-                + (1.0 - KEYBOARD_RECT_SMOOTH_ALPHA) * self.keyboard_rect
-            ).astype(np.float32)
+            if not self.keyboard_rect_initialized:
+                self.keyboard_rect = detected.astype(np.float32)
+                self.keyboard_rect_initialized = True
+            else:
+                self.keyboard_rect = (
+                    KEYBOARD_RECT_SMOOTH_ALPHA * detected
+                    + (1.0 - KEYBOARD_RECT_SMOOTH_ALPHA) * self.keyboard_rect
+                ).astype(np.float32)
             self.last_keyboard_rect_time = now
             self.keyboard_rect_locked = True
             return
 
-        if (now - self.last_keyboard_rect_time) <= KEYBOARD_RECT_HOLD_SEC:
+        if self.keyboard_rect_initialized and (now - self.last_keyboard_rect_time) <= KEYBOARD_RECT_HOLD_SEC:
             self.keyboard_rect_locked = True
             return
 
-        self.keyboard_rect = self._default_keyboard_rect()
+        if not self.keyboard_rect_initialized:
+            self.keyboard_rect = self._default_keyboard_rect()
         self.keyboard_rect_locked = False
 
     def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
@@ -755,22 +936,34 @@ class PaperPiano:
             )
             cv2.putText(frame, NOTE_NAMES[key_idx], (int(x_img), int(y_img)), font, scale, color, thickness)
 
-    def draw_status(self, frame: np.ndarray, H_ok: bool) -> None:
+    def draw_status(self, frame: np.ndarray, H_ok: bool, now: float) -> None:
         h, w = frame.shape[:2]
-        panel_h = 110
+        panel_h = 168
         overlay = frame.copy()
         cv2.rectangle(overlay, (12, 12), (560, 12 + panel_h), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.45, frame, 0.55, 0.0, frame)
 
-        status = "paper locked" if H_ok else "looking for 4 ArUco corner markers"
+        if self.tracking_mode == "LOCKED":
+            status = "paper locked (frozen)"
+        elif self.tracking_mode == "RETRACK":
+            remaining = max(0.0, RETRACK_MIN_SEC - max(0.0, now - self.retrack_start_time))
+            status = f"re-tracking ({remaining:.1f}s min)"
+        else:
+            status = "initial tracking / waiting stable"
+        if not H_ok:
+            status = "looking for 4 ArUco corner markers"
         cv2.putText(frame, f"Status: {status}", (28, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        kb_status = "tracked" if self.keyboard_rect_locked else "fallback"
+        kb_status = "locked" if self.keyboard_rect_locked else "acquiring"
         cv2.putText(frame, f"Keyboard box: {kb_status}", (300, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 255, 180), 2)
         cv2.putText(frame, "Multi-finger piano mode: stabilized press/hold/release", (28, 74),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
-        cv2.putText(frame, f"FPS: {self.fps:.1f}", (28, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+        cv2.putText(frame, f"Tracking mode: {self.tracking_mode}", (28, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+        cv2.putText(frame, f"FPS: {self.fps:.1f}", (28, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
         ids_text = ",".join(str(i) for i in self.last_detected_ids) if self.last_detected_ids else "-"
-        cv2.putText(frame, f"Aruco IDs: {ids_text}", (300, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+        cv2.putText(frame, f"Aruco IDs: {ids_text}", (300, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
+
+        if now <= self.status_notice_until and self.status_notice_text:
+            cv2.putText(frame, self.status_notice_text, (28, 158), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (80, 220, 255), 2)
 
         tips_text = "Use one fingertip first. Keep all 4 ArUco markers (ID 0/1/2/3) visible."
         cv2.putText(frame, tips_text, (w - 600, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -783,15 +976,9 @@ class PaperPiano:
         detection = predict(frame_rgb)
         hands = getattr(detection, "hand_landmarks", None) if detection is not None else None
         if not hands:
-            stale = [fid for fid in list(self.prev_key_by_finger.keys()) if fid not in current_ids]
+            stale = [fid for fid in self._all_tracked_finger_ids() if fid not in current_ids]
             for fid in stale:
-                self.prev_key_by_finger.pop(fid, None)
-                self.smoothed_fingertips.pop(fid, None)
-                self.prev_raw_fingertips.pop(fid, None)
-                self.candidate_key_by_finger.pop(fid, None)
-                self.stable_count_by_finger.pop(fid, None)
-                self.finger_state.pop(fid, None)
-                self.finger_down_key.pop(fid, None)
+                self._clear_finger_state(fid)
             return
 
         h, w = frame.shape[:2]
@@ -802,20 +989,50 @@ class PaperPiano:
 
                 lm = hand_landmarks[tip_id]
                 raw_pt = np.array([float(lm.x * w), float(lm.y * h)], dtype=np.float32)
-
-                prev_raw = self.prev_raw_fingertips.get(finger_id)
-                dy_img = 0.0 if prev_raw is None else float(raw_pt[1] - prev_raw[1])
                 self.prev_raw_fingertips[finger_id] = raw_pt
 
                 prev_pt = self.smoothed_fingertips.get(finger_id)
                 if prev_pt is None:
-                    smoothed_pt = raw_pt
+                    smoothed_pt = raw_pt.copy()
+                    dy_img = 0.0
                 else:
-                    smoothed_pt = (HAND_SMOOTH_ALPHA * raw_pt + (1.0 - HAND_SMOOTH_ALPHA) * prev_pt).astype(np.float32)
+                    delta = raw_pt - prev_pt
+                    jump_dist = float(np.linalg.norm(delta))
+                    if jump_dist > HAND_MAX_JUMP_PX:
+                        delta *= HAND_MAX_JUMP_PX / max(jump_dist, 1e-6)
+                        raw_pt = (prev_pt + delta).astype(np.float32)
+                        jump_dist = HAND_MAX_JUMP_PX
+
+                    speed_ratio = min(1.0, jump_dist / max(HAND_ADAPT_SPEED_PX, 1e-6))
+                    alpha = HAND_MIN_ALPHA + (HAND_MAX_ALPHA - HAND_MIN_ALPHA) * speed_ratio
+                    smoothed_pt = (alpha * raw_pt + (1.0 - alpha) * prev_pt).astype(np.float32)
+
+                    # Raw image-space dy (current - previous).
+                    raw_dy = float(smoothed_pt[1] - prev_pt[1])
+                    prev_dy = self.smoothed_dy_by_finger.get(finger_id, 0.0)
+                    dy_img = HAND_DY_SMOOTH_ALPHA * raw_dy + (1.0 - HAND_DY_SMOOTH_ALPHA) * prev_dy
+                    if abs(dy_img) < HAND_DY_DEADZONE_PX:
+                        dy_img = 0.0
                 self.smoothed_fingertips[finger_id] = smoothed_pt
+                self.smoothed_dy_by_finger[finger_id] = dy_img
+                # Only press/release uses display-oriented (vertically flipped) dy.
+                dy_press = -dy_img if PRESS_USE_DISPLAY_FLIPPED_DY else dy_img
+
+                tip_z_raw = float(lm.z)
+                prev_tip_z = self.smoothed_tip_z_by_finger.get(finger_id)
+                if prev_tip_z is None:
+                    smoothed_tip_z = tip_z_raw
+                else:
+                    smoothed_tip_z = HAND_Z_SMOOTH_ALPHA * tip_z_raw + (1.0 - HAND_Z_SMOOTH_ALPHA) * prev_tip_z
+                self.smoothed_tip_z_by_finger[finger_id] = smoothed_tip_z
 
                 px = int(smoothed_pt[0])
                 py = int(smoothed_pt[1])
+                hit_x = float(smoothed_pt[0])
+                hit_y = float(smoothed_pt[1])
+                if prev_pt is not None:
+                    lead_y = np.clip(dy_img * HAND_LOOKAHEAD_GAIN_Y, -HAND_LOOKAHEAD_MAX_Y, HAND_LOOKAHEAD_MAX_Y)
+                    hit_y += float(lead_y)
 
                 cv2.circle(frame, (px, py), 6, (0, 128, 255), -1)
                 cv2.circle(frame, (px, py), 10, (255, 255, 255), 2)
@@ -823,7 +1040,7 @@ class PaperPiano:
                 trigger_key = None
                 hold_key = None
                 if H is not None:
-                    paper_pt = self.image_to_paper(H, (px, py))
+                    paper_pt = self.image_to_paper(H, (hit_x, hit_y))
                     if paper_pt is not None:
                         trigger_key = self.locate_key_stable(paper_pt)
                         hold_key = self.locate_key_hold(paper_pt)
@@ -838,6 +1055,18 @@ class PaperPiano:
                 state = self.finger_state.get(finger_id, "UP")
                 down_key = self.finger_down_key.get(finger_id)
                 stable_count = self.stable_count_by_finger.get(finger_id, 0)
+                baseline_z = self.hover_baseline_z_by_finger.get(finger_id, smoothed_tip_z)
+                if state in ("UP", "HOVER") and trigger_key is not None:
+                    baseline_z = (
+                        HAND_Z_BASELINE_ALPHA * smoothed_tip_z
+                        + (1.0 - HAND_Z_BASELINE_ALPHA) * baseline_z
+                    )
+                elif state == "UP" and trigger_key is None:
+                    baseline_z = 0.04 * smoothed_tip_z + 0.96 * baseline_z
+                self.hover_baseline_z_by_finger[finger_id] = baseline_z
+                z_offset = float(smoothed_tip_z - baseline_z)
+                z_press_ok = abs(z_offset) >= PRESS_Z_OFFSET_THRESHOLD
+                z_release_ok = abs(z_offset) <= RELEASE_Z_OFFSET_THRESHOLD
 
                 # Visual key label
                 shown_key = down_key if state in ("DOWN", "HELD") and down_key is not None else trigger_key
@@ -847,6 +1076,7 @@ class PaperPiano:
 
                 # State machine per finger
                 if state == "UP":
+                    self.finger_press_dir.pop(finger_id, None)
                     if trigger_key is not None:
                         self.finger_state[finger_id] = "HOVER"
                     else:
@@ -854,9 +1084,15 @@ class PaperPiano:
 
                 elif state == "HOVER":
                     if trigger_key is None:
+                        self.finger_press_dir.pop(finger_id, None)
                         self.finger_state[finger_id] = "UP"
                     else:
-                        press_ready = (stable_count >= KEY_STABLE_FRAMES and dy_img >= PRESS_DY_THRESHOLD)
+                        dy_press_mag = abs(dy_press)
+                        dy_press_ok = dy_press_mag >= PRESS_DY_THRESHOLD
+                        strong_dy_ok = dy_press_mag >= (PRESS_DY_THRESHOLD * PRESS_STRONG_DY_MULTIPLIER)
+                        press_ready = (stable_count >= KEY_STABLE_FRAMES and dy_press_ok)
+                        if ENABLE_3D_PRESS_GATE:
+                            press_ready = press_ready and (z_press_ok or strong_dy_ok)
                         if press_ready:
                             if now - self.last_hit_time[trigger_key] > KEY_COOLDOWN_SEC:
                                 self.last_hit_time[trigger_key] = now
@@ -864,6 +1100,7 @@ class PaperPiano:
                                 self.synth.play(trigger_key)
                                 print(f"Played {NOTE_NAMES[trigger_key]}")
                             self.finger_down_key[finger_id] = trigger_key
+                            self.finger_press_dir[finger_id] = 1.0 if dy_press >= 0.0 else -1.0
                             self.prev_key_by_finger[finger_id] = trigger_key
                             self.finger_state[finger_id] = "DOWN"
                         else:
@@ -875,6 +1112,7 @@ class PaperPiano:
                     else:
                         self.finger_state[finger_id] = "UP"
                         self.finger_down_key[finger_id] = None
+                        self.finger_press_dir.pop(finger_id, None)
                         self.prev_key_by_finger[finger_id] = None
 
                 elif state == "HELD":
@@ -882,20 +1120,20 @@ class PaperPiano:
                         self.finger_state[finger_id] = "HELD"
                     else:
                         # release when leaving the hold zone or moving upward clearly
-                        if dy_img <= RELEASE_DY_THRESHOLD or hold_key != down_key:
+                        press_dir = self.finger_press_dir.get(finger_id, 1.0)
+                        reverse_dy = (-dy_press * press_dir) >= RELEASE_DY_MAG_THRESHOLD
+                        release_ready = reverse_dy or (hold_key != down_key)
+                        if ENABLE_3D_RELEASE_GATE:
+                            release_ready = release_ready or z_release_ok
+                        if release_ready:
                             self.finger_state[finger_id] = "UP"
                             self.finger_down_key[finger_id] = None
+                            self.finger_press_dir.pop(finger_id, None)
                             self.prev_key_by_finger[finger_id] = None
 
-        stale = [fid for fid in list(self.prev_key_by_finger.keys()) if fid not in current_ids]
+        stale = [fid for fid in self._all_tracked_finger_ids() if fid not in current_ids]
         for fid in stale:
-            self.prev_key_by_finger.pop(fid, None)
-            self.smoothed_fingertips.pop(fid, None)
-            self.prev_raw_fingertips.pop(fid, None)
-            self.candidate_key_by_finger.pop(fid, None)
-            self.stable_count_by_finger.pop(fid, None)
-            self.finger_state.pop(fid, None)
-            self.finger_down_key.pop(fid, None)
+            self._clear_finger_state(fid)
 
     def run(self) -> None:
         consecutive_read_fails = 0
@@ -928,7 +1166,7 @@ class PaperPiano:
                     self.draw_marker_labels(display_frame, markers, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
                     self.draw_key_labels(display_frame, H_inv, now, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
                     self.draw_hand_labels(display_frame, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
-                    self.draw_status(display_frame, H is not None)
+                    self.draw_status(display_frame, H is not None, now)
                     cv2.imshow("Paper Piano V1", display_frame)
 
                     key = cv2.waitKey(1) & 0xFF
@@ -951,4 +1189,3 @@ if __name__ == "__main__":
     print(f"[INFO] Target resolution = {CAM_WIDTH}x{CAM_HEIGHT}")
     print("[INFO] Expected cameras: 0=laptop, 1=Camo, 2=USB", flush=True)
     PaperPiano().run()
-
