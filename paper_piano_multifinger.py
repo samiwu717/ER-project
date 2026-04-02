@@ -228,6 +228,7 @@ class PaperPiano:
         self.prev_raw_fingertips: Dict[Tuple[int, int], np.ndarray] = {}
         self.finger_state: Dict[Tuple[int, int], str] = {}
         self.finger_down_key: Dict[Tuple[int, int], Optional[int]] = {}
+        self.hand_label_overlays: List[Tuple[int, float, float, Tuple[int, int, int]]] = []
 
         self.smoothed_markers: Dict[str, np.ndarray] = {}
         self.last_seen_marker_time: Dict[str, float] = {}
@@ -256,6 +257,21 @@ class PaperPiano:
             self.aruco_params.useAruco3Detection = True
         self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         self.last_detected_ids: List[int] = []
+
+    @staticmethod
+    def transform_display_point(
+        x: float,
+        y: float,
+        w: int,
+        h: int,
+        mirror_horizontal: bool = False,
+        flip_vertical: bool = False,
+    ) -> Tuple[float, float]:
+        if mirror_horizontal:
+            x = (w - 1) - x
+        if flip_vertical:
+            y = (h - 1) - y
+        return x, y
 
     def close(self) -> None:
         try:
@@ -600,8 +616,6 @@ class PaperPiano:
         if markers is not None:
             for name, pt in markers.items():
                 cv2.circle(frame, tuple(np.int32(pt)), 8, (0, 255, 255), -1)
-                cv2.putText(frame, name, tuple(np.int32(pt + np.array([6, -6], dtype=np.float32))),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
         if H_inv is None:
             return
@@ -650,7 +664,46 @@ class PaperPiano:
             cv2.fillConvexPoly(frame, np.int32(poly_img), (25, 25, 25))
             cv2.polylines(frame, [np.int32(poly_img)], True, (255, 255, 255), 1)
 
-    def draw_key_labels(self, frame: np.ndarray, H_inv: Optional[np.ndarray], now: float, mirrored_display: bool) -> None:
+    def draw_marker_labels(
+        self,
+        frame: np.ndarray,
+        markers: Optional[Dict[str, np.ndarray]],
+        mirrored_display: bool,
+        flipped_vertical: bool,
+    ) -> None:
+        if markers is None:
+            return
+
+        h, w = frame.shape[:2]
+        for name, pt in markers.items():
+            x_img = float(pt[0] + 6.0)
+            y_img = float(pt[1] - 6.0)
+            x_img, y_img = self.transform_display_point(
+                x_img,
+                y_img,
+                w,
+                h,
+                mirror_horizontal=mirrored_display,
+                flip_vertical=flipped_vertical,
+            )
+            cv2.putText(
+                frame,
+                name,
+                (int(x_img), int(y_img)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
+            )
+
+    def draw_key_labels(
+        self,
+        frame: np.ndarray,
+        H_inv: Optional[np.ndarray],
+        now: float,
+        mirrored_display: bool,
+        flipped_vertical: bool,
+    ) -> None:
         if H_inv is None:
             return
 
@@ -668,8 +721,14 @@ class PaperPiano:
             text_pos_img = self.paper_to_image(H_inv, text_pos_paper)[0]
             x_img = float(text_pos_img[0])
             y_img = float(text_pos_img[1])
-            if mirrored_display:
-                x_img = (w - 1) - x_img
+            x_img, y_img = self.transform_display_point(
+                x_img,
+                y_img,
+                w,
+                h,
+                mirror_horizontal=mirrored_display,
+                flip_vertical=flipped_vertical,
+            )
 
             color = (40, 220, 40) if now < self.active_until[idx] else (255, 255, 255)
             label = NOTE_NAMES[idx]
@@ -679,6 +738,22 @@ class PaperPiano:
             (tw, th), _ = cv2.getTextSize(label, font, scale, thickness)
             org = (int(x_img - 0.5 * tw), int(y_img + 0.5 * th))
             cv2.putText(frame, label, org, font, scale, color, thickness)
+
+    def draw_hand_labels(self, frame: np.ndarray, mirrored_display: bool, flipped_vertical: bool) -> None:
+        h, w = frame.shape[:2]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.7
+        thickness = 2
+        for key_idx, x_img, y_img, color in self.hand_label_overlays:
+            x_img, y_img = self.transform_display_point(
+                x_img,
+                y_img,
+                w,
+                h,
+                mirror_horizontal=mirrored_display,
+                flip_vertical=flipped_vertical,
+            )
+            cv2.putText(frame, NOTE_NAMES[key_idx], (int(x_img), int(y_img)), font, scale, color, thickness)
 
     def draw_status(self, frame: np.ndarray, H_ok: bool) -> None:
         h, w = frame.shape[:2]
@@ -702,6 +777,7 @@ class PaperPiano:
 
     def process_hands(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
         current_ids = set()
+        self.hand_label_overlays = []
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         detection = predict(frame_rgb)
@@ -767,8 +843,7 @@ class PaperPiano:
                 shown_key = down_key if state in ("DOWN", "HELD") and down_key is not None else trigger_key
                 if shown_key is not None:
                     color = (0, 255, 0) if state in ("DOWN", "HELD") else (0, 220, 220)
-                    cv2.putText(frame, NOTE_NAMES[shown_key], (px + 10, py - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                    self.hand_label_overlays.append((shown_key, float(px + 10), float(py - 10), color))
 
                 # State machine per finger
                 if state == "UP":
@@ -849,9 +924,11 @@ class PaperPiano:
                     self.draw_paper_overlay(frame, H_inv, markers, now)
                     self.process_hands(frame, H, now)
                     display_frame = cv2.flip(frame, 1) if MIRROR_DISPLAY else frame
-                    self.draw_key_labels(display_frame, H_inv, now, mirrored_display=MIRROR_DISPLAY)
-                    self.draw_status(display_frame, H is not None)
                     display_frame = cv2.flip(display_frame, 0)
+                    self.draw_marker_labels(display_frame, markers, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
+                    self.draw_key_labels(display_frame, H_inv, now, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
+                    self.draw_hand_labels(display_frame, mirrored_display=MIRROR_DISPLAY, flipped_vertical=True)
+                    self.draw_status(display_frame, H is not None)
                     cv2.imshow("Paper Piano V1", display_frame)
 
                     key = cv2.waitKey(1) & 0xFF
@@ -874,3 +951,4 @@ if __name__ == "__main__":
     print(f"[INFO] Target resolution = {CAM_WIDTH}x{CAM_HEIGHT}")
     print("[INFO] Expected cameras: 0=laptop, 1=Camo, 2=USB", flush=True)
     PaperPiano().run()
+
