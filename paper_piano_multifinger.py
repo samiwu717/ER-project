@@ -21,59 +21,11 @@ from prediction import predict
 #   index=1 -> Camo camera
 #   index=2 -> external USB camera
 # We force DSHOW in open_camera() to avoid hanging on the USB camera.
-<<<<<<< HEAD
-PREFERRED_CAM_INDEX = 1
-=======
 PREFERRED_CAM_INDEX = 2
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
 EXTERNAL_CAMERA_FIRST = False
 CAM_WIDTH = 1280
 CAM_HEIGHT = 720
 
-<<<<<<< HEAD
-# Canonical paper coordinate system.
-# PAPER_W x PAPER_H maps to the rectangle bounded by the outer corners
-# of the 4 ArUco markers (generated with margin=8mm on an A4 210x297mm sheet).
-# Paper space physical extent: 194mm x 281mm → scales 4.124 px/mm (X), 3.915 px/mm (Y)
-PAPER_W = 800
-PAPER_H = 1100
-
-# ── Keyboard area derived from physical PDF measurements ──────────────────────
-# Physical measurements on the printed A4 template:
-#   Keyboard width  : 13.8 cm  → centred → 36 mm side margins
-#   Top gap         :  5.25 cm (paper top edge → keyboard top)
-#   Bottom gap      :  4.9  cm (keyboard bottom → paper bottom edge)
-#   Keyboard height : 29.7 - 5.25 - 4.9 = 19.55 cm  (11 white keys stacked)
-#
-# Conversion to paper-space pixels  (origin = outer corner of TL ArUco marker = 8 mm from paper edge):
-#   X0 = (36 - 8) mm × 4.124 px/mm ≈ 115
-#   X1 = (174 - 8) mm × 4.124 px/mm ≈ 685
-#   Y0 = (52.5 - 8) mm × 3.915 px/mm ≈ 174
-#   Y1 = (248 - 8) mm × 3.915 px/mm ≈ 940
-KEYBOARD_X0 = 115
-KEYBOARD_X1 = 685
-KEYBOARD_Y0 = 174
-KEYBOARD_Y1 = 940
-NUM_WHITE_KEYS = 11
-KEYBOARD_STACK_VERTICAL = True
-
-# ── Individual white-key heights (paper-space pixels) ─────────────────────────
-# Measured from the printed template (top→bottom): C4 D4 E4 F4 G4 A4 B4 C5 D5 E5 F5
-# Physical (cm):     1.70  1.50  1.56  1.58  1.68  1.65  1.65  1.55  1.50  1.50  2.70
-# Scaled to 766 px total (= KEYBOARD_Y1 - KEYBOARD_Y0):
-KEY_H_PX = [70, 62, 64, 65, 69, 68, 68, 64, 62, 62, 112]   # must sum to 766
-
-def _make_key_boundaries():
-    b = [KEYBOARD_Y0]
-    for h in KEY_H_PX:
-        b.append(b[-1] + h)
-    return b
-
-KEY_BOUNDARIES = _make_key_boundaries()   # 12 values: start of each key + final end
-KEY_Y_START = KEY_BOUNDARIES[:NUM_WHITE_KEYS]
-KEY_Y_END   = KEY_BOUNDARIES[1:]
-
-=======
 # Canonical paper coordinate system for the current printed template (landscape).
 # IMPORTANT:
 # These coordinates are no longer based on an A4 portrait sheet.
@@ -95,7 +47,17 @@ KEYBOARD_Y1 = 1045
 NUM_WHITE_KEYS = 11
 KEYBOARD_STACK_VERTICAL = True
 
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
+# Keyboard outer-rectangle tracking (in paper coordinates).
+# We first track the printed big box, then place all internal keys by ratio.
+KEYBOARD_RECT_HOLD_SEC = 0.60
+KEYBOARD_RECT_SMOOTH_ALPHA = 0.32
+KEYBOARD_SEARCH_MARGIN_X = 0.42
+KEYBOARD_SEARCH_MARGIN_Y = 0.30
+KEYBOARD_MIN_AREA_RATIO = 0.35
+KEYBOARD_MAX_AREA_RATIO = 2.10
+KEYBOARD_MIN_SIDE_RATIO = 0.55
+KEYBOARD_MAX_SIDE_RATIO = 1.80
+
 # Use all four fingertips for a simple first version
 FINGERTIP_IDS = [8, 12, 16, 20]
 
@@ -134,45 +96,6 @@ MIRROR_DISPLAY = True
 NOTE_FREQS = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33, 659.25, 698.46]
 NOTE_NAMES = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5", "D5", "E5", "F5"]
 
-<<<<<<< HEAD
-# ── Black-key visual overlay ──────────────────────────────────────────────────
-# Black keys appear BETWEEN adjacent white keys (centred on their shared boundary).
-# They appear after white keys: C4 D4 | F4 G4 A4 | C5 D5   (indices 0,1,3,4,5,7,8)
-BLACK_KEY_AFTER_WHITE = [0, 1, 3, 4, 5, 7, 8]
-
-# X extent: labels occupy the left ~45 %; black keys occupy the remaining right portion.
-# Derived from the printed template (label area ≈ 45 % of 13.8 cm key width).
-BLACK_KEY_X0_RATIO = 0.46   # starts at 46 % of keyboard width from left
-BLACK_KEY_X1_RATIO = 0.97   # ends at 97 % (leaves a small white border on the right)
-
-# Height: measured C# ≈ 2.1 cm vs average white key ≈ 1.78 cm → ratio ≈ 1.18.
-# The black key straddles the boundary, extending ~60 % into each adjacent white key.
-BLACK_KEY_HEIGHT_RATIO = 1.18  # relative to average white-key height
-
-# Convenience: average white-key height in paper-space pixels
-_AVG_KEY_H_PX = (KEYBOARD_Y1 - KEYBOARD_Y0) / NUM_WHITE_KEYS
-BLACK_KEY_H_PX = _AVG_KEY_H_PX * BLACK_KEY_HEIGHT_RATIO  # ≈ 82 px ≈ 2.1 cm
-
-
-def build_black_key_rects() -> List[Tuple[float, float, float, float]]:
-    """Return black-key rectangles in paper-space coordinates.
-
-    Each black key is centred on the shared boundary between two adjacent white
-    keys, using the cumulative per-key heights (KEY_BOUNDARIES) so the overlay
-    matches the physically printed template exactly.
-    """
-    rects = []
-    total_w = KEYBOARD_X1 - KEYBOARD_X0
-    black_x0 = KEYBOARD_X0 + total_w * BLACK_KEY_X0_RATIO
-    black_x1 = KEYBOARD_X0 + total_w * BLACK_KEY_X1_RATIO
-    half_h = BLACK_KEY_H_PX * 0.5
-
-    for white_idx in BLACK_KEY_AFTER_WHITE:
-        # Boundary between key white_idx and white_idx+1
-        boundary_y = KEY_BOUNDARIES[white_idx + 1]
-        y0 = boundary_y - half_h
-        y1 = boundary_y + half_h
-=======
 # Optional: draw black-key overlay so the virtual keyboard visually matches the printout better.
 # For the portrait PDF, black keys sit BETWEEN white keys and extend from the right side inward.
 # Black keys appear after: C, D, F, G, A, c, d
@@ -182,26 +105,6 @@ BLACK_KEY_AFTER_WHITE = [0, 1, 3, 4, 5, 7, 8]
 BLACK_KEY_X0_RATIO = 0.56   # black key starts further to the right
 BLACK_KEY_X1_RATIO = 0.92   # do not extend fully to the white-key edge
 BLACK_KEY_HEIGHT_RATIO = 0.64  # slightly shorter, closer to the printed template
-
-
-def build_black_key_rects() -> List[Tuple[float, float, float, float]]:
-    rects = []
-    total_w = KEYBOARD_X1 - KEYBOARD_X0
-    total_h = KEYBOARD_Y1 - KEYBOARD_Y0
-    key_h = total_h / NUM_WHITE_KEYS
-
-    black_x0 = KEYBOARD_X0 + total_w * BLACK_KEY_X0_RATIO
-    black_x1 = KEYBOARD_X0 + total_w * BLACK_KEY_X1_RATIO
-    black_h = key_h * BLACK_KEY_HEIGHT_RATIO
-
-    for white_idx in BLACK_KEY_AFTER_WHITE:
-        # Center each black key on the boundary between adjacent white keys.
-        boundary_y = KEYBOARD_Y0 + (white_idx + 1) * key_h
-        y0 = boundary_y - 0.5 * black_h
-        y1 = boundary_y + 0.5 * black_h
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
-        rects.append((black_x0, y0, black_x1, y1))
-    return rects
 
 
 def open_camera(index: Optional[int] = None) -> cv2.VideoCapture:
@@ -312,6 +215,9 @@ class PaperPiano:
         self.prev_key_by_finger: Dict[Tuple[int, int], Optional[int]] = {}
         self.last_hit_time = [0.0] * NUM_WHITE_KEYS
         self.active_until = [0.0] * NUM_WHITE_KEYS
+        self.keyboard_rect = np.array([KEYBOARD_X0, KEYBOARD_Y0, KEYBOARD_X1, KEYBOARD_Y1], dtype=np.float32)
+        self.last_keyboard_rect_time: float = -999.0
+        self.keyboard_rect_locked: bool = False
 
         # Hand-tracking stabilization state
         self.smoothed_fingertips: Dict[Tuple[int, int], np.ndarray] = {}
@@ -467,82 +373,181 @@ class PaperPiano:
             return None
         return out
 
-    def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
-<<<<<<< HEAD
-        """Return one rectangle per white key using the physically measured heights."""
+    def _default_keyboard_rect(self) -> np.ndarray:
+        return np.array([KEYBOARD_X0, KEYBOARD_Y0, KEYBOARD_X1, KEYBOARD_Y1], dtype=np.float32)
+
+    def _current_keyboard_rect(self) -> Tuple[float, float, float, float]:
+        if self.keyboard_rect is None:
+            rect = self._default_keyboard_rect()
+        else:
+            rect = self.keyboard_rect
+        x0, y0, x1, y1 = [float(v) for v in rect]
+        if x1 < x0:
+            x0, x1 = x1, x0
+        if y1 < y0:
+            y0, y1 = y1, y0
+        return x0, y0, x1, y1
+
+    def _build_black_key_rects(self, keyboard_rect: Tuple[float, float, float, float]) -> List[Tuple[float, float, float, float]]:
+        x0, y0, x1, y1 = keyboard_rect
         rects = []
-        for k in range(NUM_WHITE_KEYS):
-            rects.append((KEYBOARD_X0, KEY_Y_START[k], KEYBOARD_X1, KEY_Y_END[k]))
+        total_w = x1 - x0
+        total_h = y1 - y0
+        key_h = total_h / NUM_WHITE_KEYS
+
+        black_x0 = x0 + total_w * BLACK_KEY_X0_RATIO
+        black_x1 = x0 + total_w * BLACK_KEY_X1_RATIO
+        black_h = key_h * BLACK_KEY_HEIGHT_RATIO
+
+        for white_idx in BLACK_KEY_AFTER_WHITE:
+            # Center each black key on the boundary between adjacent white keys.
+            boundary_y = y0 + (white_idx + 1) * key_h
+            by0 = boundary_y - 0.5 * black_h
+            by1 = boundary_y + 0.5 * black_h
+            rects.append((black_x0, by0, black_x1, by1))
         return rects
 
-    def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
-        """Return the white-key index (0-10) that contains paper_pt, or None."""
-        x, y = float(paper_pt[0]), float(paper_pt[1])
-        if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
-            return None
-        for k in range(NUM_WHITE_KEYS):
-            if KEY_Y_START[k] <= y < KEY_Y_END[k]:
-                return k
-        return NUM_WHITE_KEYS - 1  # clamp to last key
+    def _detect_keyboard_rect(self, frame: np.ndarray, H: np.ndarray) -> Optional[np.ndarray]:
+        """Detect printed keyboard big-box in paper coordinates."""
+        paper = cv2.warpPerspective(frame, H, (PAPER_W, PAPER_H))
+        gray = cv2.cvtColor(paper, cv2.COLOR_BGR2GRAY)
 
-    def locate_key_stable(self, paper_pt: np.ndarray) -> Optional[int]:
-        """Stable trigger zone: reject fingertips too close to key edges."""
-=======
+        exp_x0, exp_y0, exp_x1, exp_y1 = self._current_keyboard_rect()
+        exp_w = max(1.0, exp_x1 - exp_x0)
+        exp_h = max(1.0, exp_y1 - exp_y0)
+        sx0 = int(max(0, np.floor(exp_x0 - exp_w * KEYBOARD_SEARCH_MARGIN_X)))
+        sx1 = int(min(PAPER_W, np.ceil(exp_x1 + exp_w * KEYBOARD_SEARCH_MARGIN_X)))
+        sy0 = int(max(0, np.floor(exp_y0 - exp_h * KEYBOARD_SEARCH_MARGIN_Y)))
+        sy1 = int(min(PAPER_H, np.ceil(exp_y1 + exp_h * KEYBOARD_SEARCH_MARGIN_Y)))
+        if sx1 - sx0 < 20 or sy1 - sy0 < 20:
+            return None
+
+        roi = gray[sy0:sy1, sx0:sx1]
+        roi = cv2.GaussianBlur(roi, (5, 5), 0)
+        bw = cv2.adaptiveThreshold(
+            roi,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            31,
+            7,
+        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        contours_data = cv2.findContours(bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours = contours_data[0] if len(contours_data) == 2 else contours_data[1]
+        if not contours:
+            return None
+
+        d_x0, d_y0, d_x1, d_y1 = [float(v) for v in self._default_keyboard_rect()]
+        d_w = max(1.0, d_x1 - d_x0)
+        d_h = max(1.0, d_y1 - d_y0)
+        d_area = d_w * d_h
+        d_aspect = d_w / d_h
+
+        exp_cx = 0.5 * (exp_x0 + exp_x1)
+        exp_cy = 0.5 * (exp_y0 + exp_y1)
+
+        best_rect: Optional[np.ndarray] = None
+        best_score = -1e9
+
+        for cnt in contours:
+            peri = cv2.arcLength(cnt, True)
+            if peri < 100:
+                continue
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            x, y, w, h = cv2.boundingRect(approx if len(approx) >= 4 else cnt)
+            if w < 20 or h < 20:
+                continue
+
+            area = float(w * h)
+            if area < d_area * KEYBOARD_MIN_AREA_RATIO or area > d_area * KEYBOARD_MAX_AREA_RATIO:
+                continue
+
+            aspect = float(w) / max(float(h), 1e-6)
+            if aspect < d_aspect * KEYBOARD_MIN_SIDE_RATIO or aspect > d_aspect * KEYBOARD_MAX_SIDE_RATIO:
+                continue
+
+            cx = sx0 + x + 0.5 * w
+            cy = sy0 + y + 0.5 * h
+            center_penalty = abs(cx - exp_cx) / exp_w + abs(cy - exp_cy) / exp_h
+            ratio_penalty = abs(np.log(max(aspect, 1e-6) / max(d_aspect, 1e-6)))
+            area_score = min(area / d_area, 1.25)
+            quad_bonus = 1.0 if len(approx) == 4 and cv2.isContourConvex(approx) else 0.0
+
+            score = 2.0 * quad_bonus + 1.2 * area_score - 1.5 * center_penalty - 1.8 * ratio_penalty
+            if score > best_score:
+                best_score = score
+                best_rect = np.array([sx0 + x, sy0 + y, sx0 + x + w, sy0 + y + h], dtype=np.float32)
+
+        return best_rect
+
+    def update_keyboard_rect(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
+        detected: Optional[np.ndarray] = None
+        if H is not None:
+            detected = self._detect_keyboard_rect(frame, H)
+
+        if detected is not None:
+            self.keyboard_rect = (
+                KEYBOARD_RECT_SMOOTH_ALPHA * detected
+                + (1.0 - KEYBOARD_RECT_SMOOTH_ALPHA) * self.keyboard_rect
+            ).astype(np.float32)
+            self.last_keyboard_rect_time = now
+            self.keyboard_rect_locked = True
+            return
+
+        if (now - self.last_keyboard_rect_time) <= KEYBOARD_RECT_HOLD_SEC:
+            self.keyboard_rect_locked = True
+            return
+
+        self.keyboard_rect = self._default_keyboard_rect()
+        self.keyboard_rect_locked = False
+
+    def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
         rects = []
+        x0, y0, x1, y1 = self._current_keyboard_rect()
         if KEYBOARD_STACK_VERTICAL:
-            total_h = KEYBOARD_Y1 - KEYBOARD_Y0
+            total_h = y1 - y0
             key_h = total_h / NUM_WHITE_KEYS
             for k in range(NUM_WHITE_KEYS):
-                y0 = KEYBOARD_Y0 + k * key_h
-                y1 = KEYBOARD_Y0 + (k + 1) * key_h
-                rects.append((KEYBOARD_X0, y0, KEYBOARD_X1, y1))
+                ky0 = y0 + k * key_h
+                ky1 = y0 + (k + 1) * key_h
+                rects.append((x0, ky0, x1, ky1))
         else:
-            total_w = KEYBOARD_X1 - KEYBOARD_X0
+            total_w = x1 - x0
             key_w = total_w / NUM_WHITE_KEYS
             for k in range(NUM_WHITE_KEYS):
-                x0 = KEYBOARD_X0 + k * key_w
-                x1 = KEYBOARD_X0 + (k + 1) * key_w
-                rects.append((x0, KEYBOARD_Y0, x1, KEYBOARD_Y1))
+                kx0 = x0 + k * key_w
+                kx1 = x0 + (k + 1) * key_w
+                rects.append((kx0, y0, kx1, y1))
         return rects
 
     def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
-        if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
+        x0, y0, x1, y1 = self._current_keyboard_rect()
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
             return None
 
         if KEYBOARD_STACK_VERTICAL:
-            key_h = (KEYBOARD_Y1 - KEYBOARD_Y0) / NUM_WHITE_KEYS
-            idx = int((y - KEYBOARD_Y0) / key_h)
+            key_h = (y1 - y0) / NUM_WHITE_KEYS
+            idx = int((y - y0) / key_h)
         else:
-            key_w = (KEYBOARD_X1 - KEYBOARD_X0) / NUM_WHITE_KEYS
-            idx = int((x - KEYBOARD_X0) / key_w)
+            key_w = (x1 - x0) / NUM_WHITE_KEYS
+            idx = int((x - x0) / key_w)
         idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
         return idx
 
     def locate_key_stable(self, paper_pt: np.ndarray) -> Optional[int]:
         """Stable trigger zone: narrower center region to avoid boundary jitter."""
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
         x, y = float(paper_pt[0]), float(paper_pt[1])
-        if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
+        x0, y0, x1, y1 = self._current_keyboard_rect()
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
             return None
 
-<<<<<<< HEAD
-        for k in range(NUM_WHITE_KEYS):
-            if KEY_Y_START[k] <= y < KEY_Y_END[k]:
-                key_h = KEY_Y_END[k] - KEY_Y_START[k]
-                inner_pos = (y - KEY_Y_START[k]) / key_h
-                margin = KEY_EDGE_MARGIN_RATIO
-                if inner_pos < margin or inner_pos > (1.0 - margin):
-                    return None
-                return k
-        return None
-
-    def locate_key_hold(self, paper_pt: np.ndarray) -> Optional[int]:
-        """Hold zone: slightly wider than the stable trigger zone."""
-=======
         if KEYBOARD_STACK_VERTICAL:
-            key_h = (KEYBOARD_Y1 - KEYBOARD_Y0) / NUM_WHITE_KEYS
-            local = y - KEYBOARD_Y0
+            key_h = (y1 - y0) / NUM_WHITE_KEYS
+            local = y - y0
             idx = int(local / key_h)
             idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
 
@@ -552,8 +557,8 @@ class PaperPiano:
                 return None
             return idx
         else:
-            key_w = (KEYBOARD_X1 - KEYBOARD_X0) / NUM_WHITE_KEYS
-            local = x - KEYBOARD_X0
+            key_w = (x1 - x0) / NUM_WHITE_KEYS
+            local = x - x0
             idx = int(local / key_w)
             idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
 
@@ -565,26 +570,16 @@ class PaperPiano:
 
     def locate_key_hold(self, paper_pt: np.ndarray) -> Optional[int]:
         """Hold zone: slightly larger than trigger zone so a pressed finger can stay down stably."""
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
         x, y = float(paper_pt[0]), float(paper_pt[1])
-        if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
+        x0, y0, x1, y1 = self._current_keyboard_rect()
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
             return None
 
         hold_margin = max(0.04, KEY_EDGE_MARGIN_RATIO * 0.55)
 
-<<<<<<< HEAD
-        for k in range(NUM_WHITE_KEYS):
-            if KEY_Y_START[k] <= y < KEY_Y_END[k]:
-                key_h = KEY_Y_END[k] - KEY_Y_START[k]
-                inner_pos = (y - KEY_Y_START[k]) / key_h
-                if inner_pos < hold_margin or inner_pos > (1.0 - hold_margin):
-                    return None
-                return k
-        return None
-=======
         if KEYBOARD_STACK_VERTICAL:
-            key_h = (KEYBOARD_Y1 - KEYBOARD_Y0) / NUM_WHITE_KEYS
-            local = y - KEYBOARD_Y0
+            key_h = (y1 - y0) / NUM_WHITE_KEYS
+            local = y - y0
             idx = int(local / key_h)
             idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
             inner_pos = (local - idx * key_h) / key_h
@@ -592,15 +587,14 @@ class PaperPiano:
                 return None
             return idx
         else:
-            key_w = (KEYBOARD_X1 - KEYBOARD_X0) / NUM_WHITE_KEYS
-            local = x - KEYBOARD_X0
+            key_w = (x1 - x0) / NUM_WHITE_KEYS
+            local = x - x0
             idx = int(local / key_w)
             idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
             inner_pos = (local - idx * key_w) / key_w
             if inner_pos < hold_margin or inner_pos > (1.0 - hold_margin):
                 return None
             return idx
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
 
     def draw_paper_overlay(self, frame: np.ndarray, H_inv: Optional[np.ndarray], markers: Optional[Dict[str, np.ndarray]], now: float) -> None:
         if markers is not None:
@@ -621,6 +615,16 @@ class PaperPiano:
         paper_img = self.paper_to_image(H_inv, paper_quad)
         cv2.polylines(frame, [np.int32(paper_img)], True, (255, 255, 0), 2)
 
+        kx0, ky0, kx1, ky1 = self._current_keyboard_rect()
+        kpoly = np.array([
+            [kx0, ky0],
+            [kx1, ky0],
+            [kx1, ky1],
+            [kx0, ky1],
+        ], dtype=np.float32)
+        kpoly_img = self.paper_to_image(H_inv, kpoly)
+        cv2.polylines(frame, [np.int32(kpoly_img)], True, (255, 255, 0), 2)
+
         key_rects = self.build_key_rects()
         for idx, (x0, y0, x1, y1) in enumerate(key_rects):
             poly = np.array([
@@ -635,7 +639,7 @@ class PaperPiano:
             thickness = 3 if now < self.active_until[idx] else 2
             cv2.polylines(frame, [np.int32(poly_img)], True, color, thickness)
 
-        for x0, y0, x1, y1 in build_black_key_rects():
+        for x0, y0, x1, y1 in self._build_black_key_rects((kx0, ky0, kx1, ky1)):
             poly = np.array([
                 [x0, y0],
                 [x1, y0],
@@ -654,12 +658,7 @@ class PaperPiano:
         key_rects = self.build_key_rects()
         for idx, (x0, y0, x1, y1) in enumerate(key_rects):
             if KEYBOARD_STACK_VERTICAL:
-<<<<<<< HEAD
-                # Labels sit in the left ~22 % of the key width, vertically centred
-                tx_paper = x0 + (x1 - x0) * 0.22
-=======
                 tx_paper = 0.5 * (x0 + x1)
->>>>>>> 1ac3212123f4ccf8484c9e6931b3b691c6cadb9a
                 ty_paper = 0.5 * (y0 + y1)
             else:
                 tx_paper = 0.5 * (x0 + x1)
@@ -690,6 +689,8 @@ class PaperPiano:
 
         status = "paper locked" if H_ok else "looking for 4 ArUco corner markers"
         cv2.putText(frame, f"Status: {status}", (28, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        kb_status = "tracked" if self.keyboard_rect_locked else "fallback"
+        cv2.putText(frame, f"Keyboard box: {kb_status}", (300, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 255, 180), 2)
         cv2.putText(frame, "Multi-finger piano mode: stabilized press/hold/release", (28, 74),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
         cv2.putText(frame, f"FPS: {self.fps:.1f}", (28, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (220, 220, 220), 2)
@@ -844,6 +845,7 @@ class PaperPiano:
                     self.last_fps_time = now
 
                     H, H_inv, markers = self.update_homography(frame, now)
+                    self.update_keyboard_rect(frame, H, now)
                     self.draw_paper_overlay(frame, H_inv, markers, now)
                     self.process_hands(frame, H, now)
                     display_frame = cv2.flip(frame, 1) if MIRROR_DISPLAY else frame
