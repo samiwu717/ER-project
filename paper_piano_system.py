@@ -700,8 +700,6 @@ class ArucoKeyboardMapper:
             thickness = 3 if active_key == idx else 2
             cv2.polylines(frame, [np.int32(poly_img)], True, color, thickness)
             label_pos = np.mean(poly_img, axis=0).astype(int)
-            cv2.putText(frame, NOTE_NAMES[idx], (int(label_pos[0]) - 18, int(label_pos[1]) + 6),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
         for x0, y0, x1, y1 in self._build_black_key_rects((kx0, ky0, kx1, ky1)):
             poly = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
@@ -992,6 +990,16 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 else:
                     top_hand_frame = cv2.flip(top_display, -1)
+                    if H_inv is not None:
+                        for idx, (x0, y0, x1, y1) in enumerate(mapper.build_key_rects()):
+                            poly = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+                            poly_img = mapper.paper_to_image(H_inv, poly)
+                            label_pos = np.mean(poly_img, axis=0).astype(int)
+                            flipped_x = top_hand_frame.shape[1] - 1 - label_pos[0]
+                            flipped_y = top_hand_frame.shape[0] - 1 - label_pos[1]
+                            color = (0, 255, 255) if active_pressed_key == idx else (255, 255, 255)
+                            cv2.putText(top_hand_frame, NOTE_NAMES[idx], (flipped_x - 18, flipped_y + 6),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
                 if active_pressed_key is not None:
                     top_display = top_proc.copy()
@@ -1016,6 +1024,27 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                                 text = f"{format_finger_label(obs)}"
                             cv2.putText(top_hand_frame, text, (cam_x + 15, cam_y - 10),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                if H_inv is not None:
+                    for idx, (x0, y0, x1, y1) in enumerate(mapper.build_key_rects()):
+                        poly = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+                        poly_img = mapper.paper_to_image(H_inv, poly)
+                        label_pos = np.mean(poly_img, axis=0).astype(int)
+                        flipped_x = top_hand_frame.shape[1] - 1 - label_pos[0]
+                        flipped_y = top_hand_frame.shape[0] - 1 - label_pos[1]
+                        color = (0, 255, 255) if active_pressed_key == idx else (255, 255, 255)
+                        cv2.putText(top_hand_frame, NOTE_NAMES[idx], (flipped_x - 18, flipped_y + 6),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+                else:
+                    if H_inv is not None:
+                        for idx, (x0, y0, x1, y1) in enumerate(mapper.build_key_rects()):
+                            poly = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+                            poly_img = mapper.paper_to_image(H_inv, poly)
+                            label_pos = np.mean(poly_img, axis=0).astype(int)
+                            flipped_x = top_hand_frame.shape[1] - 1 - label_pos[0]
+                            flipped_y = top_hand_frame.shape[0] - 1 - label_pos[1]
+                            color = (0, 255, 255) if active_pressed_key == idx else (255, 255, 255)
+                            cv2.putText(top_hand_frame, NOTE_NAMES[idx], (flipped_x - 18, flipped_y + 6),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
                 top_display = top_hand_frame
 
                 # =============== BOTTOM CAMERA: Pressure Detection ===============
