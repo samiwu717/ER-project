@@ -21,7 +21,7 @@ from prediction import predict
 #   index=1 -> Camo camera
 #   index=2 -> external USB camera
 # We force DSHOW in open_camera() to avoid hanging on the USB camera.
-PREFERRED_CAM_INDEX = 2
+PREFERRED_CAM_INDEX = 0
 EXTERNAL_CAMERA_FIRST = False
 CAM_WIDTH = 1280
 CAM_HEIGHT = 720
