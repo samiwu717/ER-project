@@ -36,7 +36,6 @@ from prediction import predict
 TUTORIAL_MODE_DEFAULT = True
 
 TUTORIAL_SONG_NAME = "Twinkle Twinkle Little Star"
-# 一闪一闪亮晶晶，键索引对应 NOTE_NAMES:
 # C4=0, D4=1, E4=2, F4=3, G4=4, A4=5, B4=6, C5=7
 TUTORIAL_SEQUENCE = [
     0, 0, 4, 4, 5, 5, 4,   # Twin-kle twin-kle lit-tle star
@@ -204,7 +203,7 @@ class TutorialPiano(PaperPiano):
                                 self.tutorial_step += 1
                                 if self.tutorial_step >= len(TUTORIAL_SEQUENCE):
                                     self.tutorial_completed = True
-                                    print(f"[Tutorial] 🎉 完成！总错误: {self.tutorial_errors}")
+                                    print(f"[Tutorial] 🎉 Complete! Total Error: {self.tutorial_errors}")
                                 else:
                                     target = self._target_key()
                                 print(f"[Tutorial] ✓ {NOTE_NAMES[curr_key]}  "
@@ -216,7 +215,7 @@ class TutorialPiano(PaperPiano):
                                 self.tutorial_errors += 1
                                 self.synth.play(curr_key)
                                 print(f"[Tutorial] ✗ {NOTE_NAMES[curr_key]} "
-                                      f"(要按 {NOTE_NAMES[target]})  "
+                                      f"(press {NOTE_NAMES[target]})  "
                                       f"errors={self.tutorial_errors}")
                         else:
                             # 自由弹奏
