@@ -1,4 +1,4 @@
-"""This file runs the paper piano with the final tutorial mode."""
+﻿"""This file runs the paper piano with the final tutorial mode."""
 import time
 import argparse
 from dataclasses import dataclass, field
@@ -13,10 +13,7 @@ try:
 except Exception:
     pygame = None
 
-# =========================
-# Defaults / configuration
-# =========================
-# Camera selection (prefer external USB cameras for better stability)
+# parameters
 DEFAULT_TOP_CAM_INDEX = 0
 DEFAULT_SIDE_CAM_INDEX = 2
 DEFAULT_SINGLE_CAM_INDEX = 2
@@ -31,7 +28,7 @@ NUM_WHITE_KEYS = 11
 NOTE_NAMES = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5", "D5", "E5", "F5"]
 NOTE_FREQS = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33, 659.25, 698.46]
 
-# Dual-cam press trigger thresholds as a ratio of frame height.
+# Dual-cam press trigger thresholds as a ratio of frame height
 # 35 / 720 ~= 0.0486, 70 / 720 ~= 0.0972
 PRESS_DIST_RATIO = 35.0 / 720.0
 RELEASE_DIST_RATIO = 70.0 / 720.0
@@ -134,14 +131,14 @@ class TutorialState:
     correct_flash_until: List[float] = field(default_factory=lambda: [0.0] * NUM_WHITE_KEYS)
     wrong_flash_until: List[float] = field(default_factory=lambda: [0.0] * NUM_WHITE_KEYS)
 
-    # This function handles target key.
+    # handles target key
     @property
     def target_key(self) -> Optional[int]:
         if self.mode and not self.completed and self.step < len(SONG_SEQUENCE):
             return SONG_SEQUENCE[self.step]
         return None
 
-    # This function handles reset.
+    # handles reset
     def reset(self) -> None:
         self.step = 0
         self.errors = 0
@@ -150,7 +147,7 @@ class TutorialState:
         self.correct_flash_until = [0.0] * NUM_WHITE_KEYS
         self.wrong_flash_until = [0.0] * NUM_WHITE_KEYS
 
-    # This function handles register press.
+    # handles register press
     def register_press(self, key_idx: int, synth: "SimpleSynth", now: float) -> None:
         synth.play(key_idx)
         self.recent_notes = (self.recent_notes + [NOTE_NAMES[key_idx]])[-5:]
@@ -190,7 +187,7 @@ class FingerObservation:
 
 
 class SimpleSynth:
-    # This function sets up the object.
+    # sets up the object
     def __init__(self) -> None:
         self.enabled = False
         self.sounds: List[Optional["pygame.mixer.Sound"]] = []
@@ -207,7 +204,7 @@ class SimpleSynth:
             self.enabled = False
             self.sounds = [None] * len(NOTE_FREQS)
 
-    # This function makes make tone.
+    # makes make tone
     def _make_tone(self, freq: float, duration: float = 0.45, sr: int = 44100, volume: float = 0.45):
         n = int(sr * duration)
         t = np.linspace(0.0, duration, n, endpoint=False)
@@ -235,7 +232,7 @@ class SimpleSynth:
         stereo = np.column_stack([audio, audio])
         return pygame.sndarray.make_sound(stereo)
 
-    # This function plays the note sound.
+    # plays the note sound
     def play(self, key_idx: int) -> None:
         if not self.enabled:
             return
@@ -244,7 +241,7 @@ class SimpleSynth:
             if snd is not None:
                 snd.play()
 
-    # This function closes and cleans up things.
+    # closes and cleans up things
     def close(self) -> None:
         if pygame is not None:
             try:
@@ -255,7 +252,7 @@ class SimpleSynth:
 
 
 class MediaPipeHandTracker:
-    # This function sets up the object.
+    # sets up the object
     def __init__(self, max_num_hands: int = 2) -> None:
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
@@ -266,19 +263,19 @@ class MediaPipeHandTracker:
             min_tracking_confidence=0.6,
         )
 
-    # This function processes the input frame.
+    # processes the input frame
     def process(self, frame_bgr: np.ndarray):
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         return self.hands.process(rgb)
 
-    # This function draws the result on the frame.
+    # draws the result on the frame
     def draw(self, frame_bgr: np.ndarray, results) -> None:
         if not results.multi_hand_landmarks:
             return
         for hand_landmarks in results.multi_hand_landmarks:
             self.mp_drawing.draw_landmarks(frame_bgr, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
-    # This function gets get primary tip px.
+    # gets get primary tip px
     def get_primary_tip_px(self, frame_bgr: np.ndarray, results) -> Optional[np.ndarray]:
         if not results.multi_hand_landmarks:
             return None
@@ -297,7 +294,7 @@ class MediaPipeHandTracker:
                 best_tip = px
         return best_tip
 
-    # This function loops through iter fingertips.
+    # loops through iter fingertips
     def iter_fingertips(self, frame_bgr: np.ndarray, results):
         if not results.multi_hand_landmarks:
             return
@@ -307,7 +304,7 @@ class MediaPipeHandTracker:
                 lm = hand.landmark[tip_id]
                 yield tip_id, np.array([lm.x * w, lm.y * h], dtype=np.float32)
 
-    # This function loops through iter finger observations.
+    # loops through iter finger observations
     def iter_finger_observations(self, frame_bgr: np.ndarray, results) -> Iterator[FingerObservation]:
         if not results.multi_hand_landmarks:
             return
@@ -332,13 +329,13 @@ class MediaPipeHandTracker:
                     point=np.array([lm.x * w, lm.y * h], dtype=np.float32),
                 )
 
-    # This function closes and cleans up things.
+    # closes and cleans up things
     def close(self) -> None:
         self.hands.close()
 
 
 class ArucoKeyboardMapper:
-    # This function sets up the object.
+    # sets up the object
     def __init__(self) -> None:
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT_NAME)
         self.aruco_params = cv2.aruco.DetectorParameters()
@@ -383,7 +380,7 @@ class ArucoKeyboardMapper:
         self.last_seen_marker_time: Dict[str, float] = {}
         self.last_detected_ids: List[int] = []
 
-    # This function collects collect id to corners.
+    # collects collect id to corners
     def _collect_id_to_corners(self, img: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(img)
         id_to_corners: Dict[int, np.ndarray] = {}
@@ -394,7 +391,7 @@ class ArucoKeyboardMapper:
             id_to_corners[marker_id] = marker_corners.reshape(4, 2).astype(np.float32)
         return id_to_corners
 
-    # This function gets extract aruco corner points.
+    # gets extract aruco corner points
     def _extract_aruco_corner_points(self, gray: np.ndarray) -> Dict[str, np.ndarray]:
         id_to_corners = self._collect_id_to_corners(gray)
         if ARUCO_USE_MULTI_PASS and len(id_to_corners) < 4:
@@ -418,12 +415,12 @@ class ArucoKeyboardMapper:
             detected[corner_name] = marker_corners[idx].astype(np.float32)
         return detected
 
-    # This function copies copy markers.
+    # copies copy markers
     @staticmethod
     def _copy_markers(markers: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         return {name: pt.astype(np.float32).copy() for name, pt in markers.items()}
 
-    # This function handles marker motion.
+    # handles marker motion
     @staticmethod
     def _marker_motion(markers_a: Dict[str, np.ndarray], markers_b: Dict[str, np.ndarray]) -> float:
         motions: List[float] = []
@@ -437,12 +434,12 @@ class ArucoKeyboardMapper:
             return float("inf")
         return float(max(motions))
 
-    # This function resets reset stability window.
+    # resets reset stability window
     def _reset_stability_window(self) -> None:
         self.marker_stable_since = -1.0
         self.prev_markers_for_stability = None
 
-    # This function updates update marker stability.
+    # updates update marker stability
     def _update_marker_stability(self, markers: Optional[Dict[str, np.ndarray]], now: float) -> bool:
         if markers is None:
             self._reset_stability_window()
@@ -463,12 +460,12 @@ class ArucoKeyboardMapper:
             return False
         return (now - self.marker_stable_since) >= MARKER_STABLE_SEC
 
-    # This function sets set status notice.
+    # sets set status notice
     def _set_status_notice(self, text: str, now: float) -> None:
         self.status_notice_text = text
         self.status_notice_until = now + STATUS_NOTICE_SEC
 
-    # This function handles enter locked state.
+    # handles enter locked state
     def _enter_locked_state(
         self,
         markers: Dict[str, np.ndarray],
@@ -485,7 +482,7 @@ class ArucoKeyboardMapper:
         self._reset_stability_window()
         self._set_status_notice("Tracking stabilized: keyboard locked.", now)
 
-    # This function starts start retrack.
+    # starts start retrack
     def _start_retrack(self, now: float) -> None:
         self.tracking_mode = "RETRACK"
         self.retrack_start_time = now
@@ -493,7 +490,7 @@ class ArucoKeyboardMapper:
         self._reset_stability_window()
         self._set_status_notice("Large marker movement detected. Re-tracking...", now)
 
-    # This function detects detect markers.
+    # detects detect markers
     def detect_markers(self, frame: np.ndarray, now: float) -> Optional[Dict[str, np.ndarray]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         detected = self._extract_aruco_corner_points(gray)
@@ -516,7 +513,7 @@ class ArucoKeyboardMapper:
             return None
         return found
 
-    # This function updates update homography.
+    # updates update homography
     def update_homography(
         self,
         frame: np.ndarray,
@@ -569,13 +566,13 @@ class ArucoKeyboardMapper:
 
         return H, H_inv, markers
 
-    # This function changes paper points to image points.
+    # changes paper points to image points
     def paper_to_image(self, H_inv: np.ndarray, points: np.ndarray) -> np.ndarray:
         pts = points.reshape(-1, 1, 2).astype(np.float32)
         out = cv2.perspectiveTransform(pts, H_inv)
         return out.reshape(-1, 2)
 
-    # This function changes image points to paper points.
+    # changes image points to paper points
     def image_to_paper(self, H: np.ndarray, point_xy: Tuple[float, float]) -> Optional[np.ndarray]:
         pts = np.array([[point_xy]], dtype=np.float32)
         out = cv2.perspectiveTransform(pts, H)[0, 0]
@@ -583,11 +580,11 @@ class ArucoKeyboardMapper:
             return None
         return out
 
-    # This function gets the default default keyboard rect.
+    # gets the default default keyboard rect
     def _default_keyboard_rect(self) -> np.ndarray:
         return np.array([KEYBOARD_X0, KEYBOARD_Y0, KEYBOARD_X1, KEYBOARD_Y1], dtype=np.float32)
 
-    # This function gets the current current keyboard rect.
+    # gets the current current keyboard rect
     def _current_keyboard_rect(self) -> Tuple[float, float, float, float]:
         rect = self.keyboard_rect if self.keyboard_rect is not None else self._default_keyboard_rect()
         x0, y0, x1, y1 = [float(v) for v in rect]
@@ -597,7 +594,7 @@ class ArucoKeyboardMapper:
             y0, y1 = y1, y0
         return x0, y0, x1, y1
 
-    # This function builds build black key rects.
+    # builds build black key rects
     def _build_black_key_rects(self, keyboard_rect: Tuple[float, float, float, float]) -> List[Tuple[float, float, float, float]]:
         x0, y0, x1, y1 = keyboard_rect
         rects: List[Tuple[float, float, float, float]] = []
@@ -616,7 +613,7 @@ class ArucoKeyboardMapper:
             rects.append((black_x0, by0, black_x1, by1))
         return rects
 
-    # This function detects detect keyboard rect.
+    # detects detect keyboard rect
     def _detect_keyboard_rect(self, frame: np.ndarray, H: np.ndarray) -> Optional[np.ndarray]:
         paper = cv2.warpPerspective(frame, H, (PAPER_W, PAPER_H))
         gray = cv2.cvtColor(paper, cv2.COLOR_BGR2GRAY)
@@ -683,7 +680,7 @@ class ArucoKeyboardMapper:
 
         return best_rect
 
-    # This function updates update keyboard rect.
+    # updates update keyboard rect
     def update_keyboard_rect(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
         if self.tracking_mode == "LOCKED":
             self.keyboard_rect_locked = self.keyboard_rect_initialized
@@ -714,7 +711,7 @@ class ArucoKeyboardMapper:
             self.keyboard_rect = self._default_keyboard_rect()
         self.keyboard_rect_locked = False
 
-    # This function builds build key rects.
+    # builds build key rects
     def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
         rects: List[Tuple[float, float, float, float]] = []
         x0, y0, x1, y1 = self._current_keyboard_rect()
@@ -728,7 +725,7 @@ class ArucoKeyboardMapper:
                 rects.append((x0 + k * key_w, y0, x0 + (k + 1) * key_w, y1))
         return rects
 
-    # This function finds locate key.
+    # finds locate key
     def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
         x0, y0, x1, y1 = self._current_keyboard_rect()
@@ -743,7 +740,7 @@ class ArucoKeyboardMapper:
             idx = int((x - x0) / key_w)
         return int(np.clip(idx, 0, NUM_WHITE_KEYS - 1))
 
-    # This function finds locate key stable.
+    # finds locate key stable
     def locate_key_stable(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
         x0, y0, x1, y1 = self._current_keyboard_rect()
@@ -767,7 +764,7 @@ class ArucoKeyboardMapper:
             return None
         return idx
 
-    # This function draws draw paper overlay.
+    # draws draw paper overlay
     def draw_paper_overlay(
         self,
         frame: np.ndarray,
@@ -817,13 +814,13 @@ class ArucoKeyboardMapper:
 
 
 class ClickLineSelector:
-    # This function sets up the object.
+    # sets up the object
     def __init__(self, window_name: str) -> None:
         self.window_name = window_name
         self.points: List[Tuple[int, int]] = []
         cv2.setMouseCallback(window_name, self._on_mouse)
 
-    # This function handles on mouse.
+    # handles on mouse
     def _on_mouse(self, event, x, y, flags, param) -> None:
         if event != cv2.EVENT_LBUTTONDOWN:
             return
@@ -831,7 +828,7 @@ class ClickLineSelector:
             self.points = []
         self.points.append((int(x), int(y)))
 
-    # This function handles line.
+    # handles line
     def line(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         if len(self.points) < 2:
             return None
@@ -841,12 +838,12 @@ class ClickLineSelector:
             return None
         return p1, p2
 
-    # This function handles reset.
+    # handles reset
     def reset(self) -> None:
         self.points = []
 
 
-# This function opens the camera.
+# opens the camera
 def open_camera(index: int) -> cv2.VideoCapture:
     """Open camera with robust error handling and fallback logic."""
     print(f"[INFO] Opening camera index={index}...", flush=True)
@@ -887,7 +884,7 @@ def open_camera(index: int) -> cv2.VideoCapture:
     )
 
 
-# This function finds cameras that are available.
+# finds cameras that are available
 def detect_available_cameras(max_index: int = CAM_SCAN_MAX_INDEX) -> List[int]:
     available: List[int] = []
     for idx in range(max_index + 1):
@@ -922,7 +919,7 @@ def detect_available_cameras(max_index: int = CAM_SCAN_MAX_INDEX) -> List[int]:
     return available
 
 
-# This function picks two camera indexes to use.
+# picks two camera indexes to use
 def choose_two_camera_indices(
     top_idx: Optional[int],
     side_idx: Optional[int],
@@ -953,7 +950,7 @@ def choose_two_camera_indices(
     return int(top_idx), int(side_idx)
 
 
-# This function gets the signed distance to a line.
+# gets the signed distance to a line
 def signed_distance_point_to_line(pt: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
     ab = b - a
     ap = pt - a
@@ -964,21 +961,21 @@ def signed_distance_point_to_line(pt: np.ndarray, a: np.ndarray, b: np.ndarray) 
     return cross_z / denom
 
 
-# This function draws draw line.
+# draws draw line
 def draw_line(frame: np.ndarray, line: Optional[Tuple[np.ndarray, np.ndarray]], color=(50, 220, 255), thickness: int = 2) -> None:
     if line is None:
         return
     cv2.line(frame, tuple(np.int32(line[0])), tuple(np.int32(line[1])), color, thickness)
 
 
-# This function fills the shape with color.
+# fills the shape with color
 def _fill_tutorial_poly(frame: np.ndarray, poly_img: np.ndarray, color: Tuple[int, int, int], alpha: float) -> None:
     overlay = frame.copy()
     cv2.fillConvexPoly(overlay, np.int32(poly_img), color)
     cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
 
 
-# This function handles transform display point.
+# handles transform display point
 def _transform_display_point(point: np.ndarray, frame_shape: Tuple[int, int, int], flip_code: Optional[int]) -> np.ndarray:
     h, w = frame_shape[:2]
     x = float(point[0])
@@ -990,7 +987,7 @@ def _transform_display_point(point: np.ndarray, frame_shape: Tuple[int, int, int
     return np.array([x, y], dtype=np.float32)
 
 
-# This function draws draw tutorial key guide.
+# draws draw tutorial key guide
 def draw_tutorial_key_guide(
     frame: np.ndarray,
     mapper: "ArucoKeyboardMapper",
@@ -1031,7 +1028,7 @@ def draw_tutorial_key_guide(
         cv2.polylines(frame, [np.int32(poly_img)], True, color, thickness)
 
 
-# This function draws draw tutorial hud.
+# draws draw tutorial hud
 def draw_tutorial_hud(frame: np.ndarray, ts: TutorialState) -> None:
     if not ts.mode:
         return
@@ -1068,12 +1065,12 @@ def draw_tutorial_hud(frame: np.ndarray, ts: TutorialState) -> None:
     cv2.putText(frame, f"Errors: {ts.errors}", (hud_x, hud_y + 148), font, 0.65, error_color, 2)
 
 
-# This function formats the text label.
+# formats the text label
 def format_finger_label(obs: FingerObservation) -> str:
     return f"{obs.hand_label[0].upper()}{obs.tip_id}"
 
 
-# This function changes transform point for flips.
+# changes transform point for flips
 def transform_point_for_flips(
     pt: np.ndarray,
     frame_shape: Tuple[int, int, int],
@@ -1090,7 +1087,7 @@ def transform_point_for_flips(
     return np.array([x, y], dtype=np.float32)
 
 
-# This function flips the hand label.
+# flips the hand label
 def invert_hand_label(label: str) -> str:
     if label == "left":
         return "right"
@@ -1099,7 +1096,7 @@ def invert_hand_label(label: str) -> str:
     return label
 
 
-# This function handles run dual camera mode.
+# handles run dual camera mode
 def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
     """Dual camera mode:
     - Top camera: ArUco markers -> key detection
@@ -1155,14 +1152,14 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                 fps = 1.0 / dt
                 fps_time = now
 
-                # =============== TOP CAMERA: Key Detection ===============
+                # TOP CAMERA: Key Detection 
                 top_proc = top_frame.copy()
 
-                # 1) Use the original top frame for ArUco / homography / keyboard projection.
+                # 1) Use the original top frame for ArUco / homography / keyboard projection
                 H, H_inv, markers = mapper.update_homography(top_proc, now)
                 mapper.update_keyboard_rect(top_proc, H, now)
 
-                # 2) Draw the projected keyboard on the original frame first.
+                # 2) Draw the projected keyboard on the original frame first
                 top_display = top_proc.copy()
                 
                 # Process all fingertips on top camera
@@ -1170,7 +1167,7 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                 active_pressed_key: Optional[int] = None
                 mapper.draw_paper_overlay(top_display, H_inv, markers, now, active_key=active_pressed_key)
 
-                # 3) Flip the projected result horizontally and vertically, then run MediaPipe on that view.
+                # 3) Flip the projected result horizontally and vertically, then run MediaPipe on that view
                 top_hand_frame = cv2.flip(top_display, -1)
                 res_top = tracker_top.process(top_hand_frame)
                 tracker_top.draw(top_hand_frame, res_top)
@@ -1266,7 +1263,7 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
                 top_display = top_hand_frame
 
-                # =============== BOTTOM CAMERA: Pressure Detection ===============
+                # BOTTOM CAMERA: Pressure Detection
                 if MIRROR_SIDE:
                     bottom_frame = cv2.flip(bottom_frame, 1)
                 
@@ -1333,7 +1330,7 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
                         cv2.putText(bottom_frame, text, (px + 15, py - 10),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                # =============== Status Display ===============
+                # Status Display 
                 # Top camera status
                 cv2.putText(top_display, f"FPS: {fps:.1f}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
                 cv2.putText(top_display, f"Homography: {'OK' if H is not None else 'Searching 4 ArUco corners...'}", 
@@ -1392,7 +1389,7 @@ def run_dual_camera_mode(top_cam: int, side_cam: int) -> None:
         cv2.destroyAllWindows()
 
 
-# This function handles run single camera mode.
+# handles run single camera mode
 def run_single_camera_mode(cam_idx: int) -> None:
     """Single camera mode:
     - Combines ArUco key detection + pressure detection in one frame
@@ -1445,7 +1442,7 @@ def run_single_camera_mode(cam_idx: int) -> None:
                 proc_frame = frame.copy()
                 h, w = proc_frame.shape[:2]
                 
-                # Update homography from ArUco markers on the original frame.
+                # Update homography from ArUco markers on the original frame
                 H, H_inv, markers = mapper.update_homography(proc_frame, now)
                 mapper.update_keyboard_rect(proc_frame, H, now)
                 
@@ -1577,7 +1574,7 @@ def run_single_camera_mode(cam_idx: int) -> None:
         cv2.destroyAllWindows()
 
 
-# This function runs the main program.
+# runs the main program
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tutorial paper piano system based on paper_piano_system")
     parser.add_argument("--mode", choices=["dual", "single"], default="dual", help="dual: top+side cameras; single: one-camera fallback")

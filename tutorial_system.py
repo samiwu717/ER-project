@@ -35,7 +35,7 @@ from paper_piano_system import (
     signed_distance_point_to_line, draw_line, format_finger_label,
 )
 
-# ── Tutorial config ───────────────────────────────────────────────────────────
+# config
 TUTORIAL_MODE_DEFAULT = True
 
 SONG_NAME = "Twinkle Twinkle Little Star"
@@ -55,7 +55,7 @@ COLOR_WRONG   = (  0,   0, 220)
 FLASH_SEC     = 0.35
 
 
-# ── Tutorial state ────────────────────────────────────────────────────────────
+# Tutorial state 
 @dataclass
 class TutorialState:
     mode: bool = TUTORIAL_MODE_DEFAULT
@@ -65,20 +65,20 @@ class TutorialState:
     correct_flash_until: List[float] = field(default_factory=lambda: [0.0]*NUM_WHITE_KEYS)
     wrong_flash_until:   List[float] = field(default_factory=lambda: [0.0]*NUM_WHITE_KEYS)
 
-    # This function handles reset.
+    #  handles reset
     def reset(self):
         self.step, self.errors, self.completed = 0, 0, False
         self.correct_flash_until = [0.0] * NUM_WHITE_KEYS
         self.wrong_flash_until   = [0.0] * NUM_WHITE_KEYS
 
-    # This function handles target key.
+    #  handles target key retrieval
     @property
     def target_key(self) -> Optional[int]:
         if self.mode and not self.completed and self.step < len(SONG_SEQUENCE):
             return SONG_SEQUENCE[self.step]
         return None
 
-    # This function handles register press.
+    #  handles register presses and updates state accordingly
     def register_press(self, key_idx: int, synth: SimpleSynth, now: float):
         if not self.mode or self.completed:
             return
@@ -102,14 +102,14 @@ class TutorialState:
                   f"(expected {NOTE_NAMES[target]})  errors={self.errors}")
 
 
-# ── Drawing ───────────────────────────────────────────────────────────────────
+# Drawing
 def _fill(frame, poly_img, color, alpha):
     ov = frame.copy()
     cv2.fillConvexPoly(ov, np.int32(poly_img), color)
     cv2.addWeighted(ov, alpha, frame, 1-alpha, 0, frame)
 
 
-# This function draws draw tutorial keyboard.
+#  draws tutorial keyboard
 def draw_tutorial_keyboard(frame, mapper: ArucoKeyboardMapper,
                            H_inv, markers, ts: TutorialState, now):
     if markers is not None:
@@ -156,7 +156,7 @@ def draw_tutorial_keyboard(frame, mapper: ArucoKeyboardMapper,
         cv2.polylines(frame, [np.int32(pi)], True, (255,255,255), 1)
 
 
-# This function draws draw tutorial hud.
+#  draws tutorial HUD (song name, target note, progress, errors)
 def draw_tutorial_hud(frame, ts: TutorialState):
     if not ts.mode:
         return
@@ -191,7 +191,7 @@ def draw_tutorial_hud(frame, ts: TutorialState):
     cv2.putText(frame, "T=free-play  R=restart", (hx+190,hy+148), font, 0.50, (90,90,90), 1)
 
 
-# ── Single-camera tutorial loop ───────────────────────────────────────────────
+# Single-camera tutorial loop
 def run_tutorial_single(cam_idx: int):
     cap     = open_camera(cam_idx)
     tracker = MediaPipeHandTracker(max_num_hands=2)
@@ -295,7 +295,7 @@ def run_tutorial_single(cam_idx: int):
         cap.release(); tracker.close(); synth.close(); cv2.destroyAllWindows()
 
 
-# ── Dual-camera tutorial loop ─────────────────────────────────────────────────
+# Dual-camera tutorial loop 
 def run_tutorial_dual(top_cam: int, side_cam: int):
     tracker_top  = MediaPipeHandTracker(max_num_hands=2)
     tracker_side = MediaPipeHandTracker(max_num_hands=2)
@@ -402,7 +402,7 @@ def run_tutorial_dual(top_cam: int, side_cam: int):
         synth.close(); cv2.destroyAllWindows()
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# Entry point 
 def main():
     parser = argparse.ArgumentParser(description="Paper Piano Tutorial")
     parser.add_argument("--mode", choices=["single","dual"], default="single")
