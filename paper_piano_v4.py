@@ -1,3 +1,4 @@
+"""This file is the fourth paper piano version with better press logic."""
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -60,6 +61,7 @@ NOTE_FREQS = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25]
 NOTE_NAMES = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"]
 
 
+# This function opens the camera.
 def open_camera(index: int = CAM_INDEX) -> cv2.VideoCapture:
     backends = [cv2.CAP_ANY]
     for backend in (getattr(cv2, "CAP_DSHOW", None), getattr(cv2, "CAP_MSMF", None)):
@@ -77,6 +79,7 @@ def open_camera(index: int = CAM_INDEX) -> cv2.VideoCapture:
 
 
 class SimpleSynth:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.enabled = False
         self.sounds: List[Optional["pygame.mixer.Sound"]] = []
@@ -91,6 +94,7 @@ class SimpleSynth:
             print(f"[WARN] Audio disabled: {exc}")
             self.sounds = [None] * len(NOTE_FREQS)
 
+    # This function makes make tone.
     def _make_tone(self, freq: float, duration: float = 0.55, sr: int = 44100, volume: float = 0.45):
         n = int(sr * duration)
         t = np.linspace(0.0, duration, n, endpoint=False)
@@ -117,6 +121,7 @@ class SimpleSynth:
         stereo = np.column_stack([audio, audio])
         return pygame.sndarray.make_sound(stereo)
 
+    # This function plays the note sound.
     def play(self, key_idx: int) -> None:
         if not self.enabled:
             return
@@ -124,6 +129,7 @@ class SimpleSynth:
         if snd is not None:
             snd.play()
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         if pygame is not None:
             try:
@@ -134,6 +140,7 @@ class SimpleSynth:
 
 
 class PaperPianoV4:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.cap = open_camera()
         if not self.cap.isOpened():
@@ -169,6 +176,7 @@ class PaperPianoV4:
         self.geom_smooth: Optional[Dict[str, object]] = None
         self.last_geom_time = -999.0
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         try:
             if self.cap is not None:
@@ -177,6 +185,7 @@ class PaperPianoV4:
             self.synth.close()
         cv2.destroyAllWindows()
 
+    # This function collects collect id to corners.
     def _collect_id_to_corners(self, gray: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(gray)
         out: Dict[int, np.ndarray] = {}
@@ -186,6 +195,7 @@ class PaperPianoV4:
             out[int(id_arr[0])] = c.reshape(4, 2).astype(np.float32)
         return out
 
+    # This function detects detect markers multipass.
     def _detect_markers_multipass(self, gray: np.ndarray) -> Dict[int, np.ndarray]:
         id_to_corners = self._collect_id_to_corners(gray)
         if ARUCO_USE_MULTI_PASS and len(id_to_corners) < 2:
@@ -200,6 +210,7 @@ class PaperPianoV4:
                     id_to_corners = id3
         return id_to_corners
 
+    # This function handles marker feature.
     @staticmethod
     def _marker_feature(corners: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
         center = corners.mean(axis=0)
@@ -208,6 +219,7 @@ class PaperPianoV4:
         side = float(0.5 * (np.linalg.norm(corners[1] - corners[0]) + np.linalg.norm(corners[2] - corners[1])))
         return center.astype(np.float32), top_mid.astype(np.float32), side
 
+    # This function handles smooth point.
     def _smooth_point(self, key: str, p: np.ndarray, alpha: float = 0.45) -> np.ndarray:
         assert self.geom_smooth is not None
         prev = self.geom_smooth.get(key)
@@ -218,6 +230,7 @@ class PaperPianoV4:
         self.geom_smooth[key] = sp
         return sp
 
+    # This function handles estimate geometry.
     def _estimate_geometry(self, id_to_corners: Dict[int, np.ndarray], now: float) -> Optional[Dict[str, object]]:
         self.last_detected_ids = sorted(id_to_corners.keys())
         if len(id_to_corners) < 2:
@@ -286,6 +299,7 @@ class PaperPianoV4:
         self.last_geom_time = now
         return self.geom_smooth
 
+    # This function handles local point.
     @staticmethod
     def _local_point(geom: Dict[str, object], t: float, v: float) -> np.ndarray:
         a0 = geom["a0"]
@@ -294,6 +308,7 @@ class PaperPianoV4:
         length = float(geom["length"])
         return (a0 + u * (t * length) + n_up * v).astype(np.float32)
 
+    # This function handles locate key.
     def _locate_key(self, p: np.ndarray, geom: Dict[str, object]) -> Optional[Tuple[int, float, float, float]]:
         a0 = geom["a0"]
         u = geom["u"]
@@ -308,6 +323,7 @@ class PaperPianoV4:
         key_idx = max(0, min(NUM_WHITE_KEYS - 1, key_idx))
         return key_idx, t, 0.0, 0.0
 
+    # This function handles draw keyboard overlay.
     def _draw_keyboard_overlay(self, frame: np.ndarray, geom: Optional[Dict[str, object]], now: float) -> None:
         if geom is None:
             return
@@ -344,6 +360,7 @@ class PaperPianoV4:
             thick = 3 if now < self.active_until[k] else 2
             cv2.polylines(frame, [poly], True, color, thick)
 
+    # This function handles draw key labels.
     def _draw_key_labels(self, frame: np.ndarray, geom: Optional[Dict[str, object]], now: float, mirrored_display: bool) -> None:
         if geom is None:
             return
@@ -363,6 +380,7 @@ class PaperPianoV4:
             org = (int(x - 0.5 * tw), int(y + 0.5 * th))
             cv2.putText(frame, label, org, font, scale, color, thick)
 
+    # This function handles draw status.
     def _draw_status(self, frame: np.ndarray, geom_ok: bool) -> None:
         h, w = frame.shape[:2]
         overlay = frame.copy()
@@ -377,6 +395,7 @@ class PaperPianoV4:
         cv2.putText(frame, f"Aruco IDs: {ids_text}", (250, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (220, 220, 220), 2)
         cv2.putText(frame, "Gate: horizontal lane + press motion + final height-near-key gate.", (w - 655, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (0, 255, 255), 2)
 
+    # This function handles process hands.
     def _process_hands(self, frame: np.ndarray, geom: Optional[Dict[str, object]], now: float) -> None:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         detection = predict(frame_rgb)
@@ -540,6 +559,7 @@ class PaperPianoV4:
         for fid in stale:
             self.finger_states.pop(fid, None)
 
+    # This function runs the full app loop.
     def run(self) -> None:
         try:
             while True:

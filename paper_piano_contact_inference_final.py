@@ -1,3 +1,4 @@
+"""This file tests a paper piano version with contact inference."""
 import time
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
@@ -12,10 +13,7 @@ except Exception:
 
 from prediction import extract_handedness, predict
 
-
-# =========================
-# User-tunable parameters (优化后)
-# =========================
+# parameters
 PREFERRED_CAM_INDEX = 2
 EXTERNAL_CAMERA_FIRST = False
 CAM_WIDTH = 1280
@@ -48,8 +46,8 @@ HOMOGRAPHY_HOLD_SEC = 0.40
 SMOOTH_ALPHA = 0.35
 MARKER_HOLD_SEC = 0.45
 HAND_SMOOTH_ALPHA = 0.40
-# 优化：扩大有效按压区
-KEY_EDGE_MARGIN_RATIO = 0.02          # 原0.06 → 0.02
+
+KEY_EDGE_MARGIN_RATIO = 0.02          # change 0.06 → 0.02
 KEY_STABLE_FRAMES = 2
 MAX_CONSECUTIVE_READ_FAILS = 10
 HAND_MIN_HANDEDNESS_SCORE = 0.60
@@ -61,20 +59,20 @@ SHOW_PRESS_DEBUG = True
 
 CONTACT_USES_LOWER_V = True
 
-# 接触分数权重 (可保持原样)
+
 DEPTH_WEIGHT = 0.45
 CURL_WEIGHT = 0.25
 APPROACH_WEIGHT = 0.20
 DWELL_WEIGHT = 0.10
 
-# 优化后的阈值
-PRESS_DEPTH_RATIO = 0.35              # 原0.60 → 0.35，更早进入低区
-RELEASE_DEPTH_RATIO = 0.25            # 原0.45 → 0.25，防止抖动
-APPROACH_VEL_THRESHOLD = 1.0          # 原2.2 → 1.0，适应慢速按压
-CONTACT_SCORE_THRESHOLD = 0.45        # 原0.62 → 0.45，降低分数门槛
+# tuning parameters
+PRESS_DEPTH_RATIO = 0.35              # 0.60 → 0.35
+RELEASE_DEPTH_RATIO = 0.25            # 0.45 → 0.25
+APPROACH_VEL_THRESHOLD = 1.0          # 2.2 → 1.0
+CONTACT_SCORE_THRESHOLD = 0.45        # 0.62 → 0.45
 APPROACH_SCORE_THRESHOLD = 0.45
 RELEASE_SCORE_THRESHOLD = 0.38
-CONTACT_LOW_ZONE_FRAMES = 1           # 原2 → 1，单帧低区即可准备
+CONTACT_LOW_ZONE_FRAMES = 1           # 2 → 1
 CONTACT_STABLE_FRAMES = 2
 TIP_REF_SEPARATION_NORM = 24.0
 TIP_REF_CURL_GATE_NORM = 8.0
@@ -103,6 +101,7 @@ FINGER_CHAINS = {
 }
 
 
+# opens the camera
 def open_camera(index: Optional[int] = None) -> cv2.VideoCapture:
     if index is None:
         index = PREFERRED_CAM_INDEX
@@ -139,6 +138,7 @@ class SimpleSynth:
             print(f"[WARN] Audio disabled: {exc}")
             self.enabled = False
 
+    # produce tone for a given frequency
     def _make_tone(self, freq: float, duration: float = 0.55, sr: int = 44100, volume: float = 0.45):
         n = int(sr * duration)
         t = np.linspace(0.0, duration, n, endpoint=False)
@@ -161,6 +161,7 @@ class SimpleSynth:
         stereo = np.column_stack([audio, audio])
         return pygame.sndarray.make_sound(stereo)
 
+    # plays the note for a given key index
     def play(self, key_idx: int) -> None:
         if not self.enabled:
             return
@@ -168,6 +169,7 @@ class SimpleSynth:
         if snd is not None:
             snd.play()
 
+    # closes and cleans up the audio system
     def close(self) -> None:
         if pygame is not None:
             try:
@@ -234,6 +236,7 @@ class PaperPiano:
         self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         self.last_detected_ids: List[int] = []
 
+    # changes transform display point
     @staticmethod
     def transform_display_point(x: float, y: float, w: int, h: int,
                                  mirror_horizontal: bool = False, flip_vertical: bool = False) -> Tuple[float, float]:
@@ -243,6 +246,7 @@ class PaperPiano:
             y = (h - 1) - y
         return x, y
 
+    # closes and cleans up resources
     def close(self) -> None:
         try:
             if self.cap is not None:
@@ -251,6 +255,7 @@ class PaperPiano:
             self.synth.close()
         cv2.destroyAllWindows()
 
+    # collects collect id to corners mapping
     def _collect_id_to_corners(self, img: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(img)
         id_to_corners: Dict[int, np.ndarray] = {}
@@ -261,6 +266,7 @@ class PaperPiano:
             id_to_corners[marker_id] = marker_corners.reshape(4, 2).astype(np.float32)
         return id_to_corners
 
+    # gets extract aruco corner points
     def _extract_aruco_corner_points(self, gray: np.ndarray) -> Dict[str, np.ndarray]:
         id_to_corners = self._collect_id_to_corners(gray)
         if ARUCO_USE_MULTI_PASS and len(id_to_corners) < 4:
@@ -283,6 +289,7 @@ class PaperPiano:
             detected[corner_name] = marker_corners[idx].astype(np.float32)
         return detected
 
+    # detects detect markers and updates smoothing and hold state
     def detect_markers(self, frame: np.ndarray, now: float) -> Optional[Dict[str, np.ndarray]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         detected = self._extract_aruco_corner_points(gray)
@@ -309,6 +316,7 @@ class PaperPiano:
             return None
         return found
 
+    # updates update homography
     def update_homography(self, frame: np.ndarray, now: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[Dict[str, np.ndarray]]]:
         markers = self.detect_markers(frame, now)
         if markers is not None:
@@ -324,11 +332,13 @@ class PaperPiano:
             return self.last_good_H, self.last_good_H_inv, None
         return None, None, None
 
+    # changes paper points to image points
     def paper_to_image(self, H_inv: np.ndarray, points: np.ndarray) -> np.ndarray:
         pts = points.reshape(-1, 1, 2).astype(np.float32)
         out = cv2.perspectiveTransform(pts, H_inv)
         return out.reshape(-1, 2)
 
+    # changes image points to paper points
     def image_to_paper(self, H: np.ndarray, point_xy: Tuple[float, float]) -> Optional[np.ndarray]:
         pts = np.array([[point_xy]], dtype=np.float32)
         out = cv2.perspectiveTransform(pts, H)[0, 0]
@@ -336,9 +346,11 @@ class PaperPiano:
             return None
         return out
 
+    # the default default keyboard rect
     def _default_keyboard_rect(self) -> np.ndarray:
         return np.array([KEYBOARD_X0, KEYBOARD_Y0, KEYBOARD_X1, KEYBOARD_Y1], dtype=np.float32)
 
+    # function gets the tracked finger ids
     def _tracked_finger_ids(self) -> List[HandFingerId]:
         tracked = set()
         for state_map in (self.prev_key_by_finger, self.smoothed_fingertips, self.prev_raw_fingertips,
@@ -350,21 +362,25 @@ class PaperPiano:
             tracked.update(state_map.keys())
         return list(tracked)
 
+    # This function clears clear finger tracking state.
     @staticmethod
     def _clear_finger_tracking_state(finger_id: HandFingerId, *state_maps: Dict) -> None:
         for state_map in state_maps:
             state_map.pop(finger_id, None)
 
+    # This function gets landmark values.
     @staticmethod
     def _landmark_xy(hand_landmarks, landmark_id: int, frame_w: int, frame_h: int) -> np.ndarray:
         lm = hand_landmarks[landmark_id]
         return np.array([float(lm.x * frame_w), float(lm.y * frame_h)], dtype=np.float32)
 
+    # This function gets landmark values.
     @staticmethod
     def _landmark_xyz(hand_landmarks, landmark_id: int) -> np.ndarray:
         lm = hand_landmarks[landmark_id]
         return np.array([float(lm.x), float(lm.y), float(lm.z)], dtype=np.float32)
 
+    # This function gets the joint angle.
     @staticmethod
     def _joint_angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
         ba = a - b
@@ -377,6 +393,7 @@ class PaperPiano:
         cos_theta = max(-1.0, min(1.0, cos_theta))
         return float(np.degrees(np.arccos(cos_theta)))
 
+    # This function handles finger contact features.
     def _finger_contact_features(self, hand_landmarks, world_landmarks, tip_id: int,
                                  frame_w: int, frame_h: int, paper_pt: Optional[np.ndarray],
                                  finger_id: HandFingerId) -> Dict[str, float]:
@@ -428,6 +445,7 @@ class PaperPiano:
             "dip_angle": float(dip_angle),
         }
 
+    # This function handles paper axis value.
     def _paper_axis_value(self, paper_pt: Optional[np.ndarray]) -> Optional[float]:
         if paper_pt is None:
             return None
@@ -435,12 +453,14 @@ class PaperPiano:
             return float(paper_pt[1])
         return float(paper_pt[0])
 
+    # This function handles key axis bounds.
     def _key_axis_bounds(self, key_idx: int) -> Tuple[float, float]:
         x0, y0, x1, y1 = self.build_key_rects()[key_idx]
         if KEYBOARD_STACK_VERTICAL:
             return float(min(y0, y1)), float(max(y0, y1))
         return float(min(x0, x1)), float(max(x0, x1))
 
+    # This function handles normalized depth in key.
     def _normalized_depth_in_key(self, key_idx: Optional[int], paper_axis_value: Optional[float]) -> float:
         if key_idx is None or paper_axis_value is None:
             return 0.0
@@ -452,10 +472,12 @@ class PaperPiano:
             depth = (paper_axis_value - axis_lo) / denom
         return float(np.clip(depth, 0.0, 1.2))
 
+    # This function keeps the value in range.
     @staticmethod
     def _clip01(value: float) -> float:
         return float(np.clip(value, 0.0, 1.0))
 
+    # This function handles approach velocity.
     def _approach_velocity(self, prev_axis: Optional[float], curr_axis: Optional[float], finger_id: HandFingerId) -> float:
         if prev_axis is None or curr_axis is None:
             vel = 0.0
@@ -466,11 +488,13 @@ class PaperPiano:
         self.smoothed_paper_velocity_by_finger[finger_id] = float(vel)
         return float(vel)
 
+    # This function handles ref joint id.
     def _ref_joint_id(self, tip_id: int) -> int:
         if tip_id == 4:
             return 3
         return FINGER_CHAINS[tip_id][1]
 
+    # This function gets the current current keyboard rect.
     def _current_keyboard_rect(self) -> Tuple[float, float, float, float]:
         if self.keyboard_rect is None:
             rect = self._default_keyboard_rect()
@@ -483,6 +507,7 @@ class PaperPiano:
             y0, y1 = y1, y0
         return x0, y0, x1, y1
 
+    # This function builds build black key rects.
     def _build_black_key_rects(self, keyboard_rect: Tuple[float, float, float, float]) -> List[Tuple[float, float, float, float]]:
         x0, y0, x1, y1 = keyboard_rect
         rects = []
@@ -499,6 +524,7 @@ class PaperPiano:
             rects.append((black_x0, by0, black_x1, by1))
         return rects
 
+    # This function detects detect keyboard rect.
     def _detect_keyboard_rect(self, frame: np.ndarray, H: np.ndarray) -> Optional[np.ndarray]:
         paper = cv2.warpPerspective(frame, H, (PAPER_W, PAPER_H))
         gray = cv2.cvtColor(paper, cv2.COLOR_BGR2GRAY)
@@ -555,6 +581,7 @@ class PaperPiano:
                 best_rect = np.array([sx0 + x, sy0 + y, sx0 + x + w, sy0 + y + h], dtype=np.float32)
         return best_rect
 
+    # This function updates update keyboard rect.
     def update_keyboard_rect(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
         detected: Optional[np.ndarray] = None
         if H is not None:
@@ -571,6 +598,7 @@ class PaperPiano:
         self.keyboard_rect = self._default_keyboard_rect()
         self.keyboard_rect_locked = False
 
+    # This function builds build key rects.
     def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
         rects = []
         x0, y0, x1, y1 = self._current_keyboard_rect()
@@ -590,6 +618,7 @@ class PaperPiano:
                 rects.append((kx0, y0, kx1, y1))
         return rects
 
+    # This function finds locate key.
     def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
         x0, y0, x1, y1 = self._current_keyboard_rect()
@@ -604,6 +633,7 @@ class PaperPiano:
         idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
         return idx
 
+    # This function finds locate key stable.
     def locate_key_stable(self, paper_pt: np.ndarray) -> Optional[int]:
         """稳定触发区：边缘剔除比例缩小，按压更容易进入"""
         x, y = float(paper_pt[0]), float(paper_pt[1])
@@ -630,6 +660,7 @@ class PaperPiano:
                 return None
             return idx
 
+    # This function finds locate key hold.
     def locate_key_hold(self, paper_pt: np.ndarray) -> Optional[int]:
         """保持区：比触发区稍宽，防止释放抖动"""
         x, y = float(paper_pt[0]), float(paper_pt[1])
@@ -656,6 +687,7 @@ class PaperPiano:
                 return None
             return idx
 
+    # This function draws draw paper overlay.
     def draw_paper_overlay(self, frame: np.ndarray, H_inv: Optional[np.ndarray],
                            markers: Optional[Dict[str, np.ndarray]], now: float) -> None:
         if markers is not None:
@@ -683,6 +715,7 @@ class PaperPiano:
             cv2.fillConvexPoly(frame, np.int32(poly_img), (25, 25, 25))
             cv2.polylines(frame, [np.int32(poly_img)], True, (255, 255, 255), 1)
 
+    # This function draws draw marker labels.
     def draw_marker_labels(self, frame: np.ndarray, markers: Optional[Dict[str, np.ndarray]],
                            mirrored_display: bool, flipped_vertical: bool) -> None:
         if markers is None:
@@ -696,6 +729,7 @@ class PaperPiano:
                                                         flip_vertical=flipped_vertical)
             cv2.putText(frame, name, (int(x_img), int(y_img)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
+    # This function draws draw key labels.
     def draw_key_labels(self, frame: np.ndarray, H_inv: Optional[np.ndarray], now: float,
                         mirrored_display: bool, flipped_vertical: bool) -> None:
         if H_inv is None:
@@ -725,6 +759,7 @@ class PaperPiano:
             org = (int(x_img - 0.5 * tw), int(y_img + 0.5 * th))
             cv2.putText(frame, label, org, font, scale, color, thickness)
 
+    # This function draws draw hand labels.
     def draw_hand_labels(self, frame: np.ndarray, mirrored_display: bool, flipped_vertical: bool) -> None:
         h, w = frame.shape[:2]
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -752,6 +787,7 @@ class PaperPiano:
                 for idx, line in enumerate(lines):
                     cv2.putText(frame, line, (base_x, base_y + idx * line_gap), font, small_scale, color, 1)
 
+    # This function builds build hand id.
     def _build_hand_id(self, hand_landmarks, handedness_info: Dict[str, float],
                        occurrence_index: int) -> Tuple[str, Tuple[int, int, int]]:
         label = str(handedness_info.get("label", "Unknown"))
@@ -765,6 +801,7 @@ class PaperPiano:
         hand_name = fallback_side if occurrence_index == 0 else f"{fallback_side}{occurrence_index + 1}"
         return hand_name, (180, 180, 180)
 
+    # This function draws draw status.
     def draw_status(self, frame: np.ndarray, H_ok: bool) -> None:
         h, w = frame.shape[:2]
         panel_h = 110
@@ -783,6 +820,7 @@ class PaperPiano:
         tips_text = "Use fingertips. Keep all 4 ArUco markers (ID 0/1/2/3) visible."
         cv2.putText(frame, tips_text, (w - 600, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
+    # This function handles process hands.
     def process_hands(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
         current_ids = set()
         self.hand_label_overlays = []
@@ -986,6 +1024,7 @@ class PaperPiano:
                 self.approach_count_by_finger, self.contact_count_by_finger, self.release_count_by_finger,
                 self.hold_miss_count_by_finger)
 
+    # This function runs the full app loop.
     def run(self) -> None:
         consecutive_read_fails = 0
         try:

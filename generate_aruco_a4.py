@@ -1,3 +1,4 @@
+"""This file makes an A4 paper with ArUco markers for tracking."""
 from __future__ import annotations
 
 import argparse
@@ -18,10 +19,12 @@ CORNER_IDS: Dict[str, int] = {
 }
 
 
+#changes millimeters to pixels
 def mm_to_px(mm: float, dpi: int) -> int:
     return int(round(mm * dpi / 25.4))
 
 
+#saves the image with DPI info
 def save_png_with_dpi(gray: np.ndarray, out_path: Path, dpi: int) -> None:
     try:
         from PIL import Image
@@ -34,6 +37,7 @@ def save_png_with_dpi(gray: np.ndarray, out_path: Path, dpi: int) -> None:
     cv2.imwrite(str(out_path), gray)
 
 
+#makes the A4 marker template
 def generate_a4_template(
     out_path: Path,
     dpi: int,
@@ -74,6 +78,7 @@ def generate_a4_template(
     return page_w, page_h
 
 
+#reads the command line options
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a printable A4 ArUco template (DICT_5X5_50) with 4 corner markers."

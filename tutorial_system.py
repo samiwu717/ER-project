@@ -1,3 +1,4 @@
+"""This file adds tutorial mode to the main paper piano system."""
 """
 How to use:
     python tutorial.py                           # single-camera, default index
@@ -64,17 +65,20 @@ class TutorialState:
     correct_flash_until: List[float] = field(default_factory=lambda: [0.0]*NUM_WHITE_KEYS)
     wrong_flash_until:   List[float] = field(default_factory=lambda: [0.0]*NUM_WHITE_KEYS)
 
+    # This function handles reset.
     def reset(self):
         self.step, self.errors, self.completed = 0, 0, False
         self.correct_flash_until = [0.0] * NUM_WHITE_KEYS
         self.wrong_flash_until   = [0.0] * NUM_WHITE_KEYS
 
+    # This function handles target key.
     @property
     def target_key(self) -> Optional[int]:
         if self.mode and not self.completed and self.step < len(SONG_SEQUENCE):
             return SONG_SEQUENCE[self.step]
         return None
 
+    # This function handles register press.
     def register_press(self, key_idx: int, synth: SimpleSynth, now: float):
         if not self.mode or self.completed:
             return
@@ -105,6 +109,7 @@ def _fill(frame, poly_img, color, alpha):
     cv2.addWeighted(ov, alpha, frame, 1-alpha, 0, frame)
 
 
+# This function draws draw tutorial keyboard.
 def draw_tutorial_keyboard(frame, mapper: ArucoKeyboardMapper,
                            H_inv, markers, ts: TutorialState, now):
     if markers is not None:
@@ -151,6 +156,7 @@ def draw_tutorial_keyboard(frame, mapper: ArucoKeyboardMapper,
         cv2.polylines(frame, [np.int32(pi)], True, (255,255,255), 1)
 
 
+# This function draws draw tutorial hud.
 def draw_tutorial_hud(frame, ts: TutorialState):
     if not ts.mode:
         return

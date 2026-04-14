@@ -1,3 +1,4 @@
+"""This file handles hand tracking and simple camera geometry."""
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -14,6 +15,7 @@ base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
 options = vision.HandLandmarkerOptions(base_options=base_options, num_hands=2)
 detector = vision.HandLandmarker.create_from_options(options)
 
+# This function predicts the hand landmarks.
 def predict(frame):
     """
     ---------------------------------------
@@ -33,6 +35,7 @@ def predict(frame):
     
     return detection_result 
 
+# This function draws draw landmarks on image.
 def draw_landmarks_on_image(image, detection_result):
     """
     A helper function to draw the detected 2D landmarks on an image 
@@ -57,6 +60,7 @@ def draw_landmarks_on_image(image, detection_result):
             solutions.drawing_styles.get_default_hand_connections_style())
     return image
 
+# This function gets get camera matrix.
 def get_camera_matrix(frame_width, frame_height, scale=0.8):
     """
     The camera matrix is a matrix of size 3x3 that captures the intrinsic properties of the camera including focal length and center of projection. 
@@ -88,6 +92,7 @@ def get_camera_matrix(frame_width, frame_height, scale=0.8):
     )
     return camera_matrix
 
+# This function gets get fov y.
 def get_fov_y(camera_matrix, frame_height):
     """
     Compute the vertical field of view from focal length for OpenGL rendering
@@ -96,6 +101,7 @@ def get_fov_y(camera_matrix, frame_height):
     fov_y = np.rad2deg(2 * np.arctan2(frame_height, 2 * focal_length_y))
     return fov_y
 
+# This function gets get matrix44.
 def get_matrix44(rvec, tvec):
 	"""
 	Convert the rotation vector and translation vector to a 4x4 matrix
@@ -108,6 +114,7 @@ def get_matrix44(rvec, tvec):
 	T[:3, 3] = tvec
 	return T
 
+# This function handles solvepnp.
 def solvepnp(model_landmarks_list, image_landmarks_list, 
             camera_matrix, frame_width, frame_height): 
     """
@@ -159,6 +166,7 @@ def solvepnp(model_landmarks_list, image_landmarks_list,
     
     return world_landmarks_list
 
+# This function handles reproject.
 def reproject(world_landmarks_list, image_landmarks_list, 
               camera_matrix, frame_width, frame_height): 
     """

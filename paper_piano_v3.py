@@ -1,3 +1,4 @@
+"""This file is the third paper piano version with more geometry."""
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -79,6 +80,7 @@ NOTE_FREQS = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25]
 NOTE_NAMES = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"]
 
 
+# This function opens the camera.
 def open_camera(index: int = CAM_INDEX) -> cv2.VideoCapture:
     backends = [cv2.CAP_ANY]
     for backend in (getattr(cv2, "CAP_DSHOW", None), getattr(cv2, "CAP_MSMF", None)):
@@ -96,6 +98,7 @@ def open_camera(index: int = CAM_INDEX) -> cv2.VideoCapture:
 
 
 class SimpleSynth:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.enabled = False
         self.sounds: List[Optional["pygame.mixer.Sound"]] = []
@@ -110,6 +113,7 @@ class SimpleSynth:
             print(f"[WARN] Audio disabled: {exc}")
             self.sounds = [None] * len(NOTE_FREQS)
 
+    # This function makes make tone.
     def _make_tone(self, freq: float, duration: float = 0.55, sr: int = 44100, volume: float = 0.45):
         n = int(sr * duration)
         t = np.linspace(0.0, duration, n, endpoint=False)
@@ -136,6 +140,7 @@ class SimpleSynth:
         stereo = np.column_stack([audio, audio])
         return pygame.sndarray.make_sound(stereo)
 
+    # This function plays the note sound.
     def play(self, key_idx: int) -> None:
         if not self.enabled:
             return
@@ -143,6 +148,7 @@ class SimpleSynth:
         if snd is not None:
             snd.play()
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         if pygame is not None:
             try:
@@ -153,6 +159,7 @@ class SimpleSynth:
 
 
 class PaperPianoV3:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.cap = open_camera()
         if not self.cap.isOpened():
@@ -209,6 +216,7 @@ class PaperPianoV3:
         self.last_detected_ids: List[int] = []
         self.last_pose_time = -999.0
 
+    # This function builds build marker centers 3d.
     def _build_marker_centers_3d(self) -> Dict[int, np.ndarray]:
         x_l = -0.5 * RIG_W_MM + MARKER_MARGIN_MM
         x_r = +0.5 * RIG_W_MM - MARKER_MARGIN_MM
@@ -222,6 +230,7 @@ class PaperPianoV3:
             ARUCO_ID_FRONT_LEFT: np.array([x_l, y_m, z_f], dtype=np.float32),
         }
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         try:
             if self.cap is not None:
@@ -230,6 +239,7 @@ class PaperPianoV3:
             self.synth.close()
         cv2.destroyAllWindows()
 
+    # This function collects collect id to corners.
     def _collect_id_to_corners(self, gray: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(gray)
         out: Dict[int, np.ndarray] = {}
@@ -239,6 +249,7 @@ class PaperPianoV3:
             out[int(marker_id_arr[0])] = marker_corners.reshape(4, 2).astype(np.float32)
         return out
 
+    # This function detects detect markers multipass.
     def _detect_markers_multipass(self, gray: np.ndarray) -> Dict[int, np.ndarray]:
         id_to_corners = self._collect_id_to_corners(gray)
         if ARUCO_USE_MULTI_PASS and len(id_to_corners) < len(KNOWN_MARKER_IDS):
@@ -253,6 +264,7 @@ class PaperPianoV3:
                     id_to_corners = id3
         return id_to_corners
 
+    # This function handles estimate pose from marker centers.
     def _estimate_pose_from_marker_centers(self, id_to_corners: Dict[int, np.ndarray]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Dict[int, np.ndarray]]:
         obj_pts = []
         img_pts = []
@@ -289,12 +301,14 @@ class PaperPianoV3:
                 rvec, tvec = rvec2, tvec2
         return rvec, tvec, marker_centers_2d
 
+    # This function handles project points.
     def _project_points(self, pts3d: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
         K = get_camera_matrix(self.frame_w, self.frame_h).astype(np.float32)
         dist = np.zeros((5, 1), dtype=np.float32)
         pts2d, _ = cv2.projectPoints(pts3d, rvec, tvec, K, dist)
         return pts2d.reshape(-1, 2).astype(np.float32)
 
+    # This function updates update tracking.
     def _update_tracking(self, frame: np.ndarray, now: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Dict[int, np.ndarray]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         id_to_corners = self._detect_markers_multipass(gray)
@@ -326,11 +340,13 @@ class PaperPianoV3:
             return self.last_good_H, self.last_good_H_inv, self.last_top_quad, self.last_back_wall_poly, self.last_marker_centers_2d
         return None, None, None, None, marker_centers
 
+    # This function changes paper points to image points.
     def paper_to_image(self, H_inv: np.ndarray, points: np.ndarray) -> np.ndarray:
         pts = points.reshape(-1, 1, 2).astype(np.float32)
         out = cv2.perspectiveTransform(pts, H_inv)
         return out.reshape(-1, 2)
 
+    # This function changes image points to paper points.
     def image_to_paper(self, H: np.ndarray, point_xy: Tuple[float, float]) -> Optional[np.ndarray]:
         pts = np.array([[point_xy]], dtype=np.float32)
         out = cv2.perspectiveTransform(pts, H)[0, 0]
@@ -338,6 +354,7 @@ class PaperPianoV3:
             return None
         return out
 
+    # This function builds build key rects.
     def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
         rects: List[Tuple[float, float, float, float]] = []
         if KEYBOARD_STACK_VERTICAL:
@@ -356,6 +373,7 @@ class PaperPianoV3:
                 rects.append((x0, KEYBOARD_Y0, x1, KEYBOARD_Y1))
         return rects
 
+    # This function finds locate key.
     def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
         if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
@@ -368,6 +386,7 @@ class PaperPianoV3:
             idx = int((x - KEYBOARD_X0) / key_w)
         return max(0, min(NUM_WHITE_KEYS - 1, idx))
 
+    # This function handles is occluded by back plane.
     def _is_occluded_by_back_plane(self, point_xy: Tuple[float, float], back_poly: Optional[np.ndarray]) -> bool:
         if back_poly is None:
             return False
@@ -375,6 +394,7 @@ class PaperPianoV3:
         val = cv2.pointPolygonTest(contour, (float(point_xy[0]), float(point_xy[1])), False)
         return val >= 0.0
 
+    # This function draws draw overlay.
     def draw_overlay(self, frame: np.ndarray, H_inv: Optional[np.ndarray], top_quad: Optional[np.ndarray], back_poly: Optional[np.ndarray], marker_centers: Dict[int, np.ndarray], now: float) -> None:
         for mid, c in marker_centers.items():
             p = tuple(np.int32(c))
@@ -401,6 +421,7 @@ class PaperPianoV3:
             thickness = 3 if now < self.active_until[idx] else 2
             cv2.polylines(frame, [np.int32(poly_img)], True, color, thickness)
 
+    # This function draws draw key labels.
     def draw_key_labels(self, frame: np.ndarray, H_inv: Optional[np.ndarray], now: float, mirrored_display: bool) -> None:
         if H_inv is None:
             return
@@ -421,6 +442,7 @@ class PaperPianoV3:
             org = (int(x_img - 0.5 * tw), int(y_img + 0.5 * th))
             cv2.putText(frame, label, org, font, scale, color, thickness)
 
+    # This function draws draw status.
     def draw_status(self, frame: np.ndarray, H_ok: bool) -> None:
         h, w = frame.shape[:2]
         overlay = frame.copy()
@@ -435,6 +457,7 @@ class PaperPianoV3:
         cv2.putText(frame, f"Aruco IDs: {ids_text}", (260, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (220, 220, 220), 2)
         cv2.putText(frame, "Press rule: fast downward movement in one key lane.", (w - 560, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2)
 
+    # This function handles process hands.
     def process_hands(self, frame: np.ndarray, H: Optional[np.ndarray], back_poly: Optional[np.ndarray], now: float) -> None:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         detection = predict(frame_rgb)
@@ -561,6 +584,7 @@ class PaperPianoV3:
         for fid in stale:
             self.finger_states.pop(fid, None)
 
+    # This function runs the full app loop.
     def run(self) -> None:
         try:
             while True:

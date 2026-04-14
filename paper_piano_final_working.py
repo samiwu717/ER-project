@@ -1,3 +1,4 @@
+"""This file runs an older working version of the paper piano."""
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -90,6 +91,7 @@ BLACK_KEY_X1_RATIO = 0.93   # do not extend fully to the white-key edge
 BLACK_KEY_HEIGHT_RATIO = 0.64  # slightly shorter, closer to the printed template
 
 
+# This function builds build black key rects.
 def build_black_key_rects() -> List[Tuple[float, float, float, float]]:
     rects = []
     total_w = KEYBOARD_X1 - KEYBOARD_X0
@@ -109,6 +111,7 @@ def build_black_key_rects() -> List[Tuple[float, float, float, float]]:
     return rects
 
 
+# This function opens the camera.
 def open_camera(index: Optional[int] = None) -> cv2.VideoCapture:
     """Stable camera open for the current Windows setup.
 
@@ -150,6 +153,7 @@ def open_camera(index: Optional[int] = None) -> cv2.VideoCapture:
 
 
 class SimpleSynth:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.enabled = False
         self.sounds: List[Optional["pygame.mixer.Sound"]] = []
@@ -165,6 +169,7 @@ class SimpleSynth:
             self.enabled = False
             self.sounds = [None] * len(NOTE_FREQS)
 
+    # This function makes make tone.
     def _make_tone(self, freq: float, duration: float = 0.55, sr: int = 44100, volume: float = 0.45):
         n = int(sr * duration)
         t = np.linspace(0.0, duration, n, endpoint=False)
@@ -191,6 +196,7 @@ class SimpleSynth:
         stereo = np.column_stack([audio, audio])
         return pygame.sndarray.make_sound(stereo)
 
+    # This function plays the note sound.
     def play(self, key_idx: int) -> None:
         if not self.enabled:
             return
@@ -198,6 +204,7 @@ class SimpleSynth:
         if snd is not None:
             snd.play()
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         if pygame is not None:
             try:
@@ -208,6 +215,7 @@ class SimpleSynth:
 
 
 class PaperPiano:
+    # This function sets up the object.
     def __init__(self) -> None:
         self.cap = open_camera(None)
         if not self.cap.isOpened():
@@ -246,6 +254,7 @@ class PaperPiano:
         self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         self.last_detected_ids: List[int] = []
 
+    # This function closes and cleans up things.
     def close(self) -> None:
         try:
             if self.cap is not None:
@@ -254,6 +263,7 @@ class PaperPiano:
             self.synth.close()
         cv2.destroyAllWindows()
 
+    # This function collects collect id to corners.
     def _collect_id_to_corners(self, img: np.ndarray) -> Dict[int, np.ndarray]:
         corners, ids, _ = self.aruco_detector.detectMarkers(img)
         id_to_corners: Dict[int, np.ndarray] = {}
@@ -264,6 +274,7 @@ class PaperPiano:
             id_to_corners[marker_id] = marker_corners.reshape(4, 2).astype(np.float32)
         return id_to_corners
 
+    # This function gets extract aruco corner points.
     def _extract_aruco_corner_points(self, gray: np.ndarray) -> Dict[str, np.ndarray]:
         id_to_corners = self._collect_id_to_corners(gray)
         if ARUCO_USE_MULTI_PASS and len(id_to_corners) < 4:
@@ -287,6 +298,7 @@ class PaperPiano:
             detected[corner_name] = marker_corners[idx].astype(np.float32)
         return detected
 
+    # This function detects detect markers.
     def detect_markers(self, frame: np.ndarray, now: float) -> Optional[Dict[str, np.ndarray]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         detected = self._extract_aruco_corner_points(gray)
@@ -323,6 +335,7 @@ class PaperPiano:
             return None
         return found
 
+    # This function updates update homography.
     def update_homography(self, frame: np.ndarray, now: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[Dict[str, np.ndarray]]]:
         markers = self.detect_markers(frame, now)
         if markers is not None:
@@ -350,11 +363,13 @@ class PaperPiano:
 
         return None, None, None
 
+    # This function changes paper points to image points.
     def paper_to_image(self, H_inv: np.ndarray, points: np.ndarray) -> np.ndarray:
         pts = points.reshape(-1, 1, 2).astype(np.float32)
         out = cv2.perspectiveTransform(pts, H_inv)
         return out.reshape(-1, 2)
 
+    # This function changes image points to paper points.
     def image_to_paper(self, H: np.ndarray, point_xy: Tuple[float, float]) -> Optional[np.ndarray]:
         pts = np.array([[point_xy]], dtype=np.float32)
         out = cv2.perspectiveTransform(pts, H)[0, 0]
@@ -362,6 +377,7 @@ class PaperPiano:
             return None
         return out
 
+    # This function builds build key rects.
     def build_key_rects(self) -> List[Tuple[float, float, float, float]]:
         rects = []
         if KEYBOARD_STACK_VERTICAL:
@@ -380,6 +396,7 @@ class PaperPiano:
                 rects.append((x0, KEYBOARD_Y0, x1, KEYBOARD_Y1))
         return rects
 
+    # This function finds locate key.
     def locate_key(self, paper_pt: np.ndarray) -> Optional[int]:
         x, y = float(paper_pt[0]), float(paper_pt[1])
         if not (KEYBOARD_X0 <= x <= KEYBOARD_X1 and KEYBOARD_Y0 <= y <= KEYBOARD_Y1):
@@ -394,6 +411,7 @@ class PaperPiano:
         idx = max(0, min(NUM_WHITE_KEYS - 1, idx))
         return idx
 
+    # This function draws draw paper overlay.
     def draw_paper_overlay(self, frame: np.ndarray, H_inv: Optional[np.ndarray], markers: Optional[Dict[str, np.ndarray]], now: float) -> None:
         if markers is not None:
             for name, pt in markers.items():
@@ -438,6 +456,7 @@ class PaperPiano:
             cv2.fillConvexPoly(frame, np.int32(poly_img), (25, 25, 25))
             cv2.polylines(frame, [np.int32(poly_img)], True, (255, 255, 255), 1)
 
+    # This function draws draw key labels.
     def draw_key_labels(self, frame: np.ndarray, H_inv: Optional[np.ndarray], now: float, mirrored_display: bool) -> None:
         if H_inv is None:
             return
@@ -468,6 +487,7 @@ class PaperPiano:
             org = (int(x_img - 0.5 * tw), int(y_img + 0.5 * th))
             cv2.putText(frame, label, org, font, scale, color, thickness)
 
+    # This function draws draw status.
     def draw_status(self, frame: np.ndarray, H_ok: bool) -> None:
         h, w = frame.shape[:2]
         panel_h = 110
@@ -486,6 +506,7 @@ class PaperPiano:
         tips_text = "Use one fingertip first. Keep all 4 ArUco markers (ID 0/1/2/3) visible."
         cv2.putText(frame, tips_text, (w - 600, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
+    # This function handles process hands.
     def process_hands(self, frame: np.ndarray, H: Optional[np.ndarray], now: float) -> None:
         current_ids = set()
 
@@ -532,6 +553,7 @@ class PaperPiano:
         for fid in stale:
             self.prev_key_by_finger.pop(fid, None)
 
+    # This function runs the full app loop.
     def run(self) -> None:
         try:
             while True:

@@ -1,3 +1,4 @@
+"""This file checks which camera can open and show a frame."""
 import cv2
 for i in [0, 1]:
     cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)

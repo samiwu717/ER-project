@@ -1,3 +1,4 @@
+"""This file tests simple finger pressure with one camera view."""
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -15,6 +16,7 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
 
+# This function runs the main program.
 def main():
     cap = cv2.VideoCapture(2)
     if not cap.isOpened():
